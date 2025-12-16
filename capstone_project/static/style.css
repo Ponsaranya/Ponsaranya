@@ -1,0 +1,146 @@
+[data-testid="stAppViewContainer"] {
+    background-color: #eef8ff !important; /* very light page background */
+}
+
+/* Page container sizing */
+.block-container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding-top: 12px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+}
+
+/* ---------- Sticky header at top ---------- */
+.page-header {
+    margin-top: 20px;
+    position: sticky;
+    top: 0;
+    background: #eef8ff; /* same as page background to blend */
+    z-index: 999;
+    padding: 12px 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(15, 52, 80, 0.04);
+    backdrop-filter: blur(2px);
+    align-items: center;
+}
+
+.app-title {
+    font-size: 30px;
+    margin: 0 0 6px 0;
+    color: #0b3b54;
+    background-color: rgb(255, 255, 255);
+    text-align:  center;
+    border-top-left-radius: 15px;
+    border-top-right-radius: 15px;
+}
+
+.app-desc {
+    margin: 0;
+    color: #3e5a62;
+    font-size: 14px;
+    line-height: 1.45;
+    background-color: rgb(255, 255, 255);
+    text-align:  center;
+    border-bottom-left-radius: 15px;
+    border-bottom-right-radius: 15px;
+    padding-bottom: 15px;
+}
+
+/* ---------- Conversation card ---------- */
+.conversation-card {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background-color: aqua;
+}
+
+/* conversation title */
+.conv-title-row {
+    padding-left: 8px;
+}
+.conv-title {
+    margin: 0;
+    font-size: 20px;
+    color: #0b3b54;
+}
+
+/* Chat window (single scrollable panel) */
+/* .chat-window {
+    background: linear-gradient(180deg, #e8f6ff 0%, #eefbff 100%);
+    border-radius: 10px;
+    padding: 18px;
+    height: 520px;  
+    overflow-y: auto;
+    box-shadow: 0 6px 20px rgba(12, 34, 50, 0.04);
+    margin: 6px 0;
+} */
+
+/* messages */
+.msg-row {
+    display: flex;
+    margin-bottom: 12px;
+}
+.bot-row { justify-content: flex-start; }
+.user-row { justify-content: flex-end; }
+
+/* bubble */
+.bubble {
+    padding: 12px 16px;
+    border-radius: 14px;
+    max-width: 72%;
+    font-size: 15px;
+    line-height: 1.4;
+}
+
+.bot-bubble {
+    background: #ffffff;
+    color: #0f1720;
+    border: 1px solid #e7eef3;
+}
+
+.user-bubble {
+    background: #1e90ff;
+    color: #ffffff;
+}
+
+/* Input row */
+.input-row {
+    display: flex;
+    gap: 8px;
+    align-items: start;
+    margin-top: 12px;
+}
+
+/* text input */
+.input-row .stTextInput > div > div > input {
+    border-radius: 10px !important;
+    padding: 12px !important;
+    border: 1px solid #cfe6ff !important;
+    font-size: 15px;
+    width: 100%;
+    background: #ffffff !important;
+}
+
+/* Send button style (left) */
+.input-row .stButton > button {
+    background-color: #1e90ff !important;
+    color: white !important;
+    border-radius: 8px !important;
+    padding: 10px 16px !important;
+}
+
+/* Reset hint */
+.reset-note {
+    font-size: 13px;
+    color: #486c75;
+    /* margin-top: 6px; */
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .chat-window { height: 420px; }
+    .bubble { max-width: 85%; }
+}
+
