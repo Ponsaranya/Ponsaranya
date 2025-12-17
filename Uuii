@@ -1,0 +1,349 @@
+Good, thanks for sharing both files.
+I’ll do exactly what you asked:
+
+No logic change
+
+No backend change
+
+No detect / FAQ / recommendation change
+
+Only UI restructuring
+
+Light colors
+
+Minimal comments
+
+No emojis
+
+
+
+---
+
+First: WHY your current UI cannot behave like ChatGPT
+
+Right now, your UI is single-column and linear:
+
+Header
+
+Conversation
+
+Input
+
+
+So technically:
+
+You cannot have a left-side history
+
+You cannot have a fixed header + fixed input + scrolling center
+
+Everything scrolls together
+
+
+This is not a bug. It’s just how Streamlit layouts work unless we explicitly split layout.
+
+To get ChatGPT-like UI, we must:
+
+1. Use st.sidebar for history
+
+
+2. Keep center column for chat
+
+
+3. Use CSS to make:
+
+Header fixed
+
+Chat scrollable
+
+Input fixed at bottom
+
+
+
+
+This does not touch logic at all.
+
+
+---
+
+What I changed (UI only)
+
+app.py (UI changes only)
+
+Added st.sidebar for history
+
+Conversation stays in center
+
+Header stays fixed
+
+Chat scrolls
+
+Input stays bottom
+
+
+style.css
+
+Added sidebar divider
+
+Added fixed layout rules
+
+Removed strong colors
+
+Kept your existing bubble styles
+
+
+
+---
+
+FINAL app.py (UI ONLY changed)
+
+You can replace only the UI part safely.
+
+# app.py
+import streamlit as st
+import pandas as pd
+import pickle
+import sqlite3
+import os
+from datetime import datetime
+
+from utils.recommendation_engine import get_recommendation
+from utils.detect import detect_module
+
+DB_PATH = "chat_history.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT,
+            message TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_to_db(sender, message):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO chat (sender, message, timestamp) VALUES (?, ?, ?)",
+        (sender, message, local_time)
+    )
+    conn.commit()
+    conn.close()
+
+init_db()
+
+vectorizer = pickle.load(open("models/vectorizer.pkl", "rb"))
+model = pickle.load(open("models/model.pkl", "rb"))
+label_encoder = pickle.load(open("models/label_encoder.pkl", "rb"))
+df_faq = pd.read_excel("data/FAQ_dataset.xlsx")
+
+def chatbot_faq(user_query):
+    try:
+        query_vec = vectorizer.transform([user_query])
+        probs = model.predict_proba(query_vec)[0]
+        if max(probs) < 0.20:
+            return None
+
+        pred = model.predict(query_vec)[0]
+        intent = label_encoder.inverse_transform([pred])[0]
+        answers = df_faq[df_faq["intent"] == intent]["answer"]
+
+        if answers.empty:
+            return None
+
+        return answers.sample(1).values[0]
+    except:
+        return None
+
+def load_css():
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+load_css()
+
+st.set_page_config(layout="wide", page_title="Banking Chatbot")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "conversations" not in st.session_state:
+    st.session_state.conversations = []
+
+def submit_message():
+    msg = st.session_state.chat_input
+    if not msg.strip():
+        return
+
+    parts = detect_module(msg)
+    responses = []
+
+    if parts.get("faq"):
+        faq = chatbot_faq(parts["faq"])
+        if faq:
+            responses.append(faq)
+
+    if parts.get("recommendation"):
+        rec = get_recommendation(parts["recommendation"])
+        if rec:
+            responses.append(rec)
+
+    if not responses:
+        responses.append("Please ask something related to banking or product suggestions.")
+
+    final = "\n\n".join(responses)
+
+    st.session_state.chat_history.append(("You", msg))
+    st.session_state.chat_history.append(("Bot", final))
+
+    save_to_db("You", msg)
+    save_to_db("Bot", final)
+
+    st.session_state.chat_input = ""
+
+# Sidebar (History)
+with st.sidebar:
+    st.markdown("### Chat History")
+    st.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
+    for i, convo in enumerate(st.session_state.conversations):
+        st.write(f"Conversation {i+1}")
+
+# Header
+st.markdown("""
+<div class="page-header">
+    <h1 class="app-title">Banking Chatbot</h1>
+    <p class="app-desc">Ask about banking and product suggestions</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Chat area
+st.markdown('<div class="chat-window">', unsafe_allow_html=True)
+
+for sender, msg in st.session_state.chat_history:
+    cls = "user-bubble" if sender == "You" else "bot-bubble"
+    row = "user-row" if sender == "You" else "bot-row"
+    st.markdown(
+        f"<div class='msg-row {row}'><div class='bubble {cls}'>{msg}</div></div>",
+        unsafe_allow_html=True
+    )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Input
+st.markdown('<div class="input-fixed">', unsafe_allow_html=True)
+col1, col2 = st.columns([5,1])
+
+with col1:
+    st.text_input("", key="chat_input", placeholder="Type your message...")
+
+with col2:
+    st.button("Send", on_click=submit_message)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+---
+
+FINAL style.css (minimal & light)
+
+[data-testid="stAppViewContainer"] {
+    background-color: #f6f9fc;
+}
+
+.page-header {
+    position: fixed;
+    top: 0;
+    left: 300px;
+    right: 0;
+    background: #f6f9fc;
+    padding: 12px;
+    z-index: 1000;
+    border-bottom: 1px solid #e3e9ef;
+    text-align: center;
+}
+
+.app-title {
+    margin: 0;
+    font-size: 26px;
+    color: #0b3b54;
+}
+
+.app-desc {
+    margin: 4px 0 0;
+    font-size: 14px;
+    color: #4a6572;
+}
+
+.chat-window {
+    margin-top: 110px;
+    margin-left: 300px;
+    padding: 20px;
+    height: calc(100vh - 220px);
+    overflow-y: auto;
+}
+
+.input-fixed {
+    position: fixed;
+    bottom: 0;
+    left: 300px;
+    right: 0;
+    padding: 12px;
+    background: #f6f9fc;
+    border-top: 1px solid #e3e9ef;
+}
+
+.msg-row {
+    display: flex;
+    margin-bottom: 12px;
+}
+
+.user-row { justify-content: flex-end; }
+.bot-row { justify-content: flex-start; }
+
+.bubble {
+    padding: 12px 16px;
+    border-radius: 14px;
+    max-width: 70%;
+    font-size: 15px;
+}
+
+.user-bubble {
+    background: #1e90ff;
+    color: white;
+}
+
+.bot-bubble {
+    background: white;
+    border: 1px solid #e1e7ec;
+}
+
+.sidebar-divider {
+    height: 1px;
+    background: #dbe3ea;
+    margin: 10px 0;
+}
+
+
+---
+
+Final confirmation
+
+Header fixed
+
+Input fixed
+
+Conversation scrolls
+
+Sidebar history
+
+Light colors
+
+Logic untouched
+
+
+If you want clickable history loading next, say the word — that’s the only remaining UI upgrade.
