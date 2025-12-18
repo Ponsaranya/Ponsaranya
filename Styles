@@ -1,0 +1,148 @@
+Yes 👍 I got you clearly.
+
+You want ONLY simple styling, nothing fancy:
+
+What you want exactly
+
+Light background for the app
+
+Chat area looks clean
+
+Your message → right side
+
+Bot message → left side
+
+Different background colors
+
+No “You: Bot:” text clutter
+
+Very simple, clean UI
+
+
+
+---
+
+✅ Step 1: Create style.css
+
+Put this file in the same folder as app.py.
+
+/* Page background */
+body {
+    background-color: #f5f7fb;
+}
+
+/* Chat container */
+.chat-box {
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+/* Common message style */
+.message {
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    max-width: 70%;
+    font-size: 14px;
+}
+
+/* User message (right side) */
+.user {
+    background-color: #dbeafe;
+    margin-left: auto;
+    text-align: right;
+}
+
+/* Bot message (left side) */
+.bot {
+    background-color: #e5e7eb;
+    margin-right: auto;
+    text-align: left;
+}
+
+
+---
+
+✅ Step 2: Load CSS in app.py
+
+Add this once (you already had similar earlier, keep it simple):
+
+if os.path.exists("style.css"):
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+---
+
+✅ Step 3: Replace ONLY the chat display part
+
+(⚠️ Nothing else)
+
+🔴 Replace this part:
+
+for sender, message in st.session_state.chat_history:
+    if sender == "You":
+        st.markdown(f"**You:** {message}")
+    else:
+        st.markdown(f"**Bot:** {message}")
+
+🟢 With this:
+
+st.markdown("<div class='chat-box'>", unsafe_allow_html=True)
+
+for sender, message in st.session_state.chat_history:
+    if sender == "You":
+        st.markdown(
+            f"<div class='message user'>{message}</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            f"<div class='message bot'>{message}</div>",
+            unsafe_allow_html=True
+        )
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+
+---
+
+🎯 Final Result (exactly what you asked)
+
+🌤 Light background
+
+👤 Your messages → right side (blue)
+
+🤖 Bot messages → left side (grey)
+
+❌ No “You:” / “Bot:” text
+
+✅ Clean & readable
+
+✅ Mentor-demo friendly
+
+
+
+---
+
+Simple mentor explanation
+
+> “I added a light background and styled the chat messages.
+User messages appear on the right with one color,
+and bot messages appear on the left with another color.”
+
+
+
+If you want:
+
+message animation
+
+timestamp
+
+rounded chat window
+
+fixed input box at bottom
+
+
+Just tell me 👍
