@@ -1,0 +1,199 @@
+Yes, I completely understand what you want 👍
+Below is a clean, end-to-end, step-by-step Streamlit implementation for your Banking ChatBot OCR module that does exactly this:
+✔ Upload PDF / JPG only
+✔ Extract Name, Account Number
+✔ Separate Debit / Credit columns
+✔ Detect abbreviations from description
+✔ Do expense categorization
+✔ User chooses 3 options to see results
+This is project-ready and mentor-friendly.
+🔹 STEP 1: Install Required Libraries
+Copy code
+Bash
+pip install streamlit pytesseract pillow pdf2image pandas opencv-python
+Important
+Install Tesseract OCR
+Windows: https://github.com/UB-Mannheim/tesseract/wiki
+Linux:
+Copy code
+Bash
+sudo apt install tesseract-ocr
+🔹 STEP 2: Project Structure
+Copy code
+
+banking_ocr_chatbot/
+│
+├── app.py
+├── utils.py
+└── requirements.txt
+🔹 STEP 3: utils.py (OCR + Processing Logic)
+Copy code
+Python
+import pytesseract
+import re
+import pandas as pd
+from PIL import Image
+from pdf2image import convert_from_bytes
+
+# ---------- OCR FUNCTION ----------
+def extract_text(file):
+    text = ""
+
+    if file.type == "application/pdf":
+        images = convert_from_bytes(file.read())
+        for img in images:
+            text += pytesseract.image_to_string(img)
+
+    else:
+        image = Image.open(file)
+        text = pytesseract.image_to_string(image)
+
+    return text
+
+
+# ---------- EXTRACT BASIC DETAILS ----------
+def extract_account_details(text):
+    name = re.search(r'Name\s*:\s*(.*)', text)
+    acc_no = re.search(r'Account Number\s*:\s*([\d\s]+)', text)
+
+    return {
+        "Name": name.group(1).strip() if name else "Not Found",
+        "Account Number": acc_no.group(1).strip() if acc_no else "Not Found"
+    }
+
+
+# ---------- EXTRACT TRANSACTIONS ----------
+def extract_transactions(text):
+    rows = []
+    pattern = r'(\d{2}/\d{2}/\d{4})\s+(.*?)\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})'
+
+    for match in re.finditer(pattern, text):
+        rows.append({
+            "Date": match.group(1),
+            "Description": match.group(2),
+            "Debit": match.group(3) or "0",
+            "Credit": match.group(4) or "0",
+            "Balance": match.group(5)
+        })
+
+    df = pd.DataFrame(rows)
+
+    df["Debit"] = df["Debit"].str.replace(",", "").astype(float)
+    df["Credit"] = df["Credit"].str.replace(",", "").astype(float)
+
+    return df
+
+
+# ---------- ABBREVIATIONS ----------
+ABBREVIATIONS = {
+    "ATM": "Cash Withdrawal",
+    "UPI": "Unified Payments Interface",
+    "NEFT": "National Electronic Funds Transfer",
+    "IMPS": "Immediate Payment Service",
+    "POS": "Card Payment",
+    "EMI": "Loan Repayment"
+}
+
+def find_abbreviations(df):
+    found = {}
+
+    for desc in df["Description"]:
+        for abbr, meaning in ABBREVIATIONS.items():
+            if abbr in desc:
+                found[abbr] = meaning
+
+    return found
+
+
+# ---------- EXPENSE CATEGORIZATION ----------
+def categorize_expenses(df):
+    categories = {
+        "Food": ["ZOMATO", "MCDONALDS"],
+        "Shopping": ["AMAZON", "FLIPKART"],
+        "Cash": ["ATM"],
+        "Transfer": ["UPI", "IMPS", "NEFT"],
+        "Charges": ["SERVICE"]
+    }
+
+    df["Category"] = "Others"
+
+    for category, keywords in categories.items():
+        for keyword in keywords:
+            df.loc[df["Description"].str.upper().str.contains(keyword), "Category"] = category
+
+    return df
+🔹 STEP 4: app.py (Streamlit UI + ChatBot Options)
+Copy code
+Python
+import streamlit as st
+from utils import *
+
+st.set_page_config(page_title="Banking OCR ChatBot", layout="wide")
+
+st.title("🏦 Banking ChatBot with OCR")
+
+uploaded_file = st.file_uploader(
+    "Upload Bank Statement (PDF / JPG only)",
+    type=["pdf", "jpg", "jpeg"]
+)
+
+if uploaded_file:
+    text = extract_text(uploaded_file)
+
+    details = extract_account_details(text)
+    df = extract_transactions(text)
+
+    st.subheader("📄 Account Details")
+    st.write(details)
+
+    option = st.radio(
+        "Choose an option",
+        ("Credit / Debit Summary", "Abbreviations", "Expense Categorization")
+    )
+
+    # -------- OPTION 1 --------
+    if option == "Credit / Debit Summary":
+        st.subheader("💰 Credit & Debit Summary")
+        st.write("Total Credit:", df["Credit"].sum())
+        st.write("Total Debit:", df["Debit"].sum())
+        st.write("Closing Balance:", df["Balance"].iloc[-1])
+        st.dataframe(df)
+
+    # -------- OPTION 2 --------
+    elif option == "Abbreviations":
+        st.subheader("📘 Abbreviations Found")
+        abbrs = find_abbreviations(df)
+
+        if abbrs:
+            for k, v in abbrs.items():
+                st.write(f"**{k}** : {v}")
+        else:
+            st.write("No abbreviations found.")
+
+    # -------- OPTION 3 --------
+    elif option == "Expense Categorization":
+        st.subheader("📊 Expense Categorization")
+        categorized_df = categorize_expenses(df)
+        st.dataframe(categorized_df)
+        st.bar_chart(categorized_df.groupby("Category")["Debit"].sum())
+🔹 STEP 5: Run the App
+Copy code
+Bash
+streamlit run app.py
+🔹 WHAT THIS PROJECT CAN DO (EXACTLY AS YOU ASKED)
+✔ Upload PDF / JPG only
+✔ OCR extracts text from bank statement
+✔ Extracts Name & Account Number
+✔ Separates Debit / Credit / Balance
+✔ Explains abbreviations
+✔ Categorizes expenses
+✔ User selects 3 options manually
+🔹 HOW TO EXPLAIN THIS IN VIVA (1 Line)
+“Our Banking ChatBot uses OCR to read bank statements and allows users to analyze credit, debit, abbreviations, and expense categories through an interactive Streamlit interface.”
+If you want next:
+✅ Chat-style interface instead of radio
+✅ LLM integration
+✅ Better regex for tables
+✅ PDF table extraction using Camelot
+✅ Project report & PPT
+Just tell me 🔥
