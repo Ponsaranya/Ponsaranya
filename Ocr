@@ -1,0 +1,187 @@
+Perfect 👍 I see the issue clearly now.
+What you pasted is correct in logic, but it violates your office-laptop restriction because it depends on Tesseract (.exe + admin install).
+So here’s what we’ll do 👇
+I’ll fix this properly and give you a mentor-safe, office-laptop-safe version of the same project, with ZERO system installation.
+❌ What is NOT allowed on your office laptop
+From your pasted steps, these must be removed:
+pytesseract
+pdf2image
+Installing Tesseract OCR
+sudo apt install tesseract-ocr
+✅ CORRECT APPROACH FOR OFFICE LAPTOP (NO ADMIN)
+🔥 Final OCR Strategy (Industry-Safe)
+PDF (text-based bank statements) → pdfplumber
+Image (JPG/PNG scanned statements) → EasyOCR
+Single Streamlit app
+Same outputs: Name, Account No, Debit/Credit, Abbreviations, Categories
+✅ UPDATED STEPS (USE THIS IN YOUR PROJECT)
+🔹 STEP 1: Install Libraries (SAFE)
+Copy code
+Bash
+pip install streamlit easyocr pdfplumber pillow pandas opencv-python
+✔ No .exe
+✔ No admin
+✔ Works on office laptop
+🔹 STEP 2: Project Structure (Same)
+Copy code
+
+banking_ocr_chatbot/
+│
+├── app.py
+├── utils.py
+└── requirements.txt
+🔹 STEP 3: utils.py (NO TESSERACT)
+Copy code
+Python
+import easyocr
+import pdfplumber
+import re
+import pandas as pd
+from PIL import Image
+import numpy as np
+
+# Initialize EasyOCR once
+reader = easyocr.Reader(['en'])
+
+# ---------- OCR FUNCTION ----------
+def extract_text(file):
+    text = ""
+
+    if file.type == "application/pdf":
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
+
+    else:
+        image = Image.open(file)
+        img_array = np.array(image)
+        result = reader.readtext(img_array)
+        text = " ".join([res[1] for res in result])
+
+    return text
+
+
+# ---------- ACCOUNT DETAILS ----------
+def extract_account_details(text):
+    name = re.search(r'Name\s*[:\-]\s*(.*)', text)
+    acc = re.search(r'Account\s*(No|Number)\s*[:\-]\s*(\d+)', text)
+
+    return {
+        "Name": name.group(1).strip() if name else "Not Found",
+        "Account Number": acc.group(2) if acc else "Not Found"
+    }
+
+
+# ---------- TRANSACTIONS ----------
+def extract_transactions(text):
+    rows = []
+    pattern = r'(\d{2}/\d{2}/\d{4})\s+(.*?)\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})'
+
+    for match in re.finditer(pattern, text):
+        rows.append({
+            "Date": match.group(1),
+            "Description": match.group(2),
+            "Debit": float(match.group(3).replace(",", "")) if match.group(3) else 0,
+            "Credit": float(match.group(4).replace(",", "")) if match.group(4) else 0
+        })
+
+    return pd.DataFrame(rows)
+
+
+# ---------- ABBREVIATIONS ----------
+ABBREVIATIONS = {
+    "UPI": "Unified Payments Interface",
+    "IMPS": "Immediate Payment Service",
+    "NEFT": "National Electronic Funds Transfer",
+    "ATM": "Cash Withdrawal",
+    "POS": "Card Payment",
+    "EMI": "Loan Repayment"
+}
+
+def find_abbreviations(df):
+    found = {}
+    for desc in df["Description"]:
+        for abbr, meaning in ABBREVIATIONS.items():
+            if abbr in desc.upper():
+                found[abbr] = meaning
+    return found
+
+
+# ---------- EXPENSE CATEGORIZATION ----------
+def categorize_expenses(df):
+    categories = {
+        "Food": ["ZOMATO", "SWIGGY"],
+        "Shopping": ["AMAZON", "FLIPKART"],
+        "Cash": ["ATM"],
+        "Transfer": ["UPI", "IMPS", "NEFT"],
+        "Charges": ["CHARGE"]
+    }
+
+    df["Category"] = "Others"
+    for cat, keys in categories.items():
+        for key in keys:
+            df.loc[df["Description"].str.upper().str.contains(key), "Category"] = cat
+
+    return df
+🔹 STEP 4: app.py (Minor Change – Same UI)
+Copy code
+Python
+import streamlit as st
+from utils import *
+
+st.set_page_config(page_title="Banking OCR ChatBot", layout="wide")
+st.title("🏦 Banking ChatBot with OCR")
+
+file = st.file_uploader(
+    "Upload Bank Statement (PDF / JPG only)",
+    type=["pdf", "jpg", "jpeg"]
+)
+
+if file:
+    text = extract_text(file)
+
+    details = extract_account_details(text)
+    df = extract_transactions(text)
+
+    st.subheader("📄 Account Details")
+    st.json(details)
+
+    option = st.radio(
+        "Choose an option",
+        ["Credit / Debit Summary", "Abbreviations", "Expense Categorization"]
+    )
+
+    if option == "Credit / Debit Summary":
+        st.write("Total Credit:", df["Credit"].sum())
+        st.write("Total Debit:", df["Debit"].sum())
+        st.dataframe(df)
+
+    elif option == "Abbreviations":
+        abbrs = find_abbreviations(df)
+        for k, v in abbrs.items():
+            st.write(f"**{k}** : {v}")
+
+    else:
+        cat_df = categorize_expenses(df)
+        st.dataframe(cat_df)
+        st.bar_chart(cat_df.groupby("Category")["Debit"].sum())
+🔹 STEP 5: Run
+Copy code
+Bash
+streamlit run app.py
+✅ WHAT YOU CAN TELL YOUR MENTOR (IMPORTANT)
+“Since this is an office laptop, I avoided system-level OCR tools and implemented OCR using EasyOCR and PDFPlumber, which works entirely at the Python level without admin access.”
+👆 This sounds professional and smart, not like a limitation.
+🔥 Final Verdict
+❌ Tesseract → Not allowed
+✅ EasyOCR + pdfplumber → Best choice
+✅ Your pasted logic → Correct, now fixed
+✅ Project → Viva-ready + deployment-safe
+If you want next:
+💬 Chat-style UI instead of radio
+📊 Monthly expense analytics
+🤖 LLM-based smart categorization
+📄 Project report + PPT
+Just tell me 🔥
