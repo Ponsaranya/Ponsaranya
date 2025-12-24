@@ -1,0 +1,72 @@
+import pandas as pd
+from detect import detect_intent   # USING YOUR EXISTING detect.py
+
+# ---------------- LOAD DATA ---------------- #
+
+FAQ_FILE = "faq_dataset.xlsx"
+REC_FILE = "recommendation_dataset.csv"
+
+faq_df = pd.read_excel(FAQ_FILE)
+rec_df = pd.read_csv(REC_FILE)
+
+
+# ---------------- FAQ SEARCH ---------------- #
+
+def search_faq(query):
+    for _, row in faq_df.iterrows():
+        if row["question"].lower() in query.lower():
+            return row["answer"]
+    return None
+
+
+# ---------------- RECOMMENDATION SEARCH ---------------- #
+
+def search_recommendation(query):
+    intent = detect_intent(query)
+
+    for _, row in rec_df.iterrows():
+        if row["intent"].lower() == intent.lower():
+            return row["recommendation"]
+
+    return None
+
+
+# ---------------- HALLUCINATION CHECK ---------------- #
+
+def hallucination_check(query):
+    """
+    Returns:
+    - response text
+    - source (FAQ / RECOMMENDATION / HALLUCINATION)
+    """
+
+    # 1️⃣ FAQ
+    faq_answer = search_faq(query)
+    if faq_answer:
+        return faq_answer, "FAQ"
+
+    # 2️⃣ Recommendation
+    rec_answer = search_recommendation(query)
+    if rec_answer:
+        return rec_answer, "RECOMMENDATION"
+
+    # 3️⃣ Hallucination detected
+    return (
+        "⚠️ I don’t have verified data for this query. "
+        "This may cause hallucination. Please rephrase or ask a banking-related question.",
+        "HALLUCINATION"
+    )
+
+
+# ---------------- MANUAL TEST ---------------- #
+
+if __name__ == "__main__":
+    while True:
+        q = input("\nUser: ")
+        if q.lower() in ["exit", "quit"]:
+            break
+
+        answer, source = hallucination_check(q)
+
+        print("\nBot:", answer)
+        print("Source:", source)
