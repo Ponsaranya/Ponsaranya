@@ -1,0 +1,300 @@
+Perfect! Here’s a fully updated app.py with all your features integrated:
+Original chatbot logic intact
+CSS loaded and applied
+Chat history preserved
+Send and Reset buttons restored
+Plus-icon / file uploader for PDF/JPG/JPEG
+OCR extraction: Name, masked account number
+Three options handled: credit/debit summary, abbreviation explanation, expense categorization
+All conversation saved in DB
+You can copy-paste this directly.
+Copy code
+Python
+import streamlit as st
+import pandas as pd
+import pickle
+import sqlite3
+import os
+import json
+from datetime import datetime
+
+from utils.recommendation_engine import get_recommendation
+from utils.detect import detect_module
+from utils.llm_fallback import llm_answer
+from utils.ocr_chat import (
+    extract_text,
+    extract_account_details,
+    credit_debit_balance,
+    explain_abbreviations,
+    expense_categorization
+)
+
+# ---------------- AUTH ----------------
+
+def load_user():
+    with open("user.json", "r") as f:
+        return json.load(f)
+
+def authenticate(username, password):
+    user = load_user()
+    return username == user["username"] and password == user["password"]
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Sign In"):
+        if authenticate(username, password):
+            st.session_state.logged_in = True
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
+    st.stop()
+
+# ---------------- DATABASE ----------------
+
+DB_PATH = "chat__hist.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            sender TEXT,
+            message TEXT,
+            timestamp DATETIME
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def create_new_session():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO sessions DEFAULT VALUES")
+    sid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return sid
+
+def save_to_db(sender, message):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO chat (session_id, sender, message, timestamp) VALUES (?, ?, ?, ?)",
+        (st.session_state.session_id, sender, message, datetime.now())
+    )
+    conn.commit()
+    conn.close()
+
+def load_session(session_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT sender, message FROM chat WHERE session_id=? ORDER BY timestamp",
+        (session_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    st.session_state.session_id = session_id
+    st.session_state.chat_history = rows
+
+init_db()
+
+# ---------------- MODELS ----------------
+
+vectorizer = pickle.load(open("models/vectorizer.pkl", "rb"))
+model = pickle.load(open("models/model.pkl", "rb"))
+label_encoder = pickle.load(open("models/label_encoder.pkl", "rb"))
+df_faq = pd.read_excel("data/FAQ_dataset.xlsx")
+
+def chatbot_faq(query):
+    try:
+        vec = vectorizer.transform([query])
+        probs = model.predict_proba(vec)[0]
+        if max(probs) < 0.2:
+            return None
+        pred = model.predict(vec)[0]
+        intent = label_encoder.inverse_transform([pred])[0]
+        ans = df_faq[df_faq["intent"] == intent]["answer"]
+        return ans.sample(1).values[0] if not ans.empty else None
+    except:
+        return None
+
+# ---------------- SESSION STATE ----------------
+
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_new_session()
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "ocr_text" not in st.session_state:
+    st.session_state.ocr_text = None
+
+# ---------------- CSS ----------------
+if os.path.exists("style.css"):
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# ---------------- MESSAGE HANDLER ----------------
+
+def submit_message():
+    msg = st.session_state.chat_input.strip()
+    if not msg:
+        return
+
+    if st.session_state.ocr_text:
+        lower = msg.lower()
+
+        if "credit" in lower and "debit" in lower:
+            c, d, b = credit_debit_balance(st.session_state.ocr_text)
+            reply = f"Total Credit: {c}\nTotal Debit: {d}\nAvailable Balance: {b}"
+
+        elif "abbreviation" in lower:
+            abbr = explain_abbreviations(st.session_state.ocr_text)
+            reply = "\n".join(abbr) if abbr else "No abbreviations found."
+
+        elif "expense" in lower:
+            exp = expense_categorization(st.session_state.ocr_text)
+            reply = (
+                f"Food: {exp['Food']}\n"
+                f"Shopping: {exp['Shopping']}\n"
+                f"Cash: {exp['Cash']}"
+            )
+        else:
+            reply = None
+
+        if reply:
+            st.session_state.chat_history.append(("You", msg))
+            st.session_state.chat_history.append(("Bot", reply))
+            save_to_db("You", msg)
+            save_to_db("Bot", reply)
+            st.session_state.chat_input = ""
+            return
+
+    parts = detect_module(msg)
+    responses = []
+
+    if parts.get("faq"):
+        faq = chatbot_faq(parts["faq"])
+        if faq:
+            responses.append(faq)
+
+    if parts.get("recommendation"):
+        rec = get_recommendation(parts["recommendation"])
+        if rec:
+            responses.append(rec)
+
+    if not responses:
+        responses.append(llm_answer(msg))
+
+    final = "\n\n".join(responses)
+    st.session_state.chat_history.append(("You", msg))
+    st.session_state.chat_history.append(("Bot", final))
+    save_to_db("You", msg)
+    save_to_db("Bot", final)
+    st.session_state.chat_input = ""
+
+# ---------------- UI ----------------
+
+st.set_page_config(page_title="Banking Chatbot", layout="wide")
+
+col1, col2 = st.columns([9,1])
+with col1:
+    st.markdown("<h2>Banking Chatbot</h2>", unsafe_allow_html=True)
+with col2:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+
+left, center = st.columns([1.3, 3.7])
+
+with left:
+    st.markdown("### Chat History")
+    conn = sqlite3.connect(DB_PATH)
+    sessions = pd.read_sql("SELECT session_id FROM sessions ORDER BY session_id DESC", conn)
+    conn.close()
+
+    for sid in sessions["session_id"]:
+        if st.button(f"Conversation {sid}", key=f"s{sid}"):
+            load_session(sid)
+            st.rerun()
+
+with center:
+    st.markdown("<div class='chat-box'>", unsafe_allow_html=True)
+    for sender, msg in st.session_state.chat_history:
+        if sender == "You":
+            st.markdown(f"<div class='message user'>{msg}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='message bot'>{msg}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    col_msg, col_plus = st.columns([9,1])
+    with col_msg:
+        st.text_input(
+            "",
+            key="chat_input",
+            placeholder="Type your message and press Enter",
+            on_change=submit_message
+        )
+    with col_plus:
+        uploaded_file = st.file_uploader(
+            "",
+            type=["pdf","jpg","jpeg"],
+            label_visibility="collapsed"
+        )
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if st.button("Send"):
+            submit_message()
+    with col2:
+        if st.button("Reset"):
+            st.session_state.session_id = create_new_session()
+            st.session_state.chat_history = []
+            st.session_state.ocr_text = None
+            st.rerun()
+
+    st.markdown(
+        "<div style='color:green;font-size:12px;margin-top:6px;text-align:right;'>"
+        "If you want to reset the conversation, click Reset button."
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    if uploaded_file:
+        if uploaded_file.type not in ["application/pdf","image/jpeg","image/jpg"]:
+            st.error("Please upload PDF, JPG or JPEG only.")
+        else:
+            text = extract_text(uploaded_file)
+            st.session_state.ocr_text = text
+            name, acc_no = extract_account_details(text)
+            bot_msg = (
+                f"Bank statement uploaded successfully.\n\n"
+                f"Name: {name}\n"
+                f"Account Number: {acc_no}\n\n"
+                f"Choose one option:\n"
+                f"1. credit debit summary\n"
+                f"2. abbreviation explanation\n"
+                f"3. expense categorization"
+            )
+            st.session_state.chat_history.append(("You", "Uploaded bank statement"))
+            st.session_state.chat_history.append(("Bot", bot_msg))
+            save_to_db("You", "Uploaded bank statement")
+            save_to_db("Bot", bot_msg)
+            st.rerun()
+If you want, next I can also add clickable buttons for the 3 OCR options so the user does not need to type “credit debit” etc, it will be 1-click inside the chat UI.
+Do you want me to do that?
