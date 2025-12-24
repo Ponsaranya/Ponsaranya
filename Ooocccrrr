@@ -1,0 +1,349 @@
+Perfect! I understand exactly — you want a fully working, ready-to-copy set of code for both:
+utils/ocr_chat.py — handles PDF and image uploads using PDFPlumber + EasyOCR + PIL + NumPy + Pandas + re, extracts:
+Name
+Account number (mask all but last few digits)
+Debit / credit / balance
+Abbreviation explanation
+Expense categorization
+app.py — your chatbot remains fully intact, CSS, Send/Reset buttons, chat history, LLM integration, and file upload with the OCR workflow.
+This version does NOT require Poppler, works entirely on Python libraries you can install on your office laptop.
+Here’s the complete code:
+1️⃣ utils/ocr_chat.py
+Copy code
+Python
+import re
+import pandas as pd
+import pdfplumber
+import easyocr
+from PIL import Image
+import numpy as np
+from io import BytesIO
+
+# Initialize EasyOCR once
+reader = easyocr.Reader(['en'])
+
+# ---------------- Extract Text ----------------
+def extract_text(file):
+    text = ""
+    if file.type in ["application/pdf"]:
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
+    else:  # Image
+        img = Image.open(file).convert("RGB")
+        result = reader.readtext(np.array(img))
+        for r in result:
+            text += r[1] + "\n"
+    return text
+
+# ---------------- Extract Name & Account Number ----------------
+def extract_account_details(text):
+    # Name (assume Name: John Doe)
+    name_match = re.search(r"(Name|Account Holder|Holder)\s*[:\-]?\s*([A-Za-z ]+)", text, re.I)
+    name = name_match.group(2).strip() if name_match else "Unknown"
+
+    # Account number (mask except last 4)
+    acc_match = re.search(r"(Account Number|A/C No|Acc No)\s*[:\-]?\s*(\d{4,})", text, re.I)
+    if acc_match:
+        acc_no = acc_match.group(2)
+        acc_no_masked = "*" * (len(acc_no)-4) + acc_no[-4:]
+    else:
+        acc_no_masked = "Unknown"
+
+    return name, acc_no_masked
+
+# ---------------- Credit / Debit / Balance ----------------
+def credit_debit_balance(text):
+    debit, credit, balance = 0, 0, 0
+    # Example regex to find numbers in "Debit" or "Credit" lines
+    lines = text.splitlines()
+    for line in lines:
+        if re.search(r"Debit", line, re.I):
+            num = re.findall(r"\d+[\.,]?\d*", line.replace(",",""))
+            debit += sum([float(n) for n in num]) if num else 0
+        elif re.search(r"Credit", line, re.I):
+            num = re.findall(r"\d+[\.,]?\d*", line.replace(",",""))
+            credit += sum([float(n) for n in num]) if num else 0
+        elif re.search(r"Balance|Available Balance", line, re.I):
+            num = re.findall(r"\d+[\.,]?\d*", line.replace(",",""))
+            if num:
+                balance = float(num[-1])
+    return round(credit,2), round(debit,2), round(balance,2)
+
+# ---------------- Abbreviation Explanation ----------------
+ABBR_DICT = {
+    "ATM": "Cash Withdrawal",
+    "NEFT": "National Electronic Fund Transfer",
+    "RTGS": "Real Time Gross Settlement",
+    "POS": "Point of Sale",
+    "IMPS": "Immediate Payment Service"
+}
+
+def explain_abbreviations(text):
+    found = []
+    for abbr in ABBR_DICT:
+        if re.search(r"\b" + abbr + r"\b", text):
+            found.append(f"{abbr}: {ABBR_DICT[abbr]}")
+    return found
+
+# ---------------- Expense Categorization ----------------
+def expense_categorization(text):
+    categories = {"Food":0, "Shopping":0, "Cash":0}
+    lines = text.splitlines()
+    for line in lines:
+        amt = re.findall(r"\d+[\.,]?\d*", line.replace(",",""))
+        amt = float(amt[0]) if amt else 0
+        if re.search(r"Restaurant|Cafe|Food|Dine", line, re.I):
+            categories["Food"] += amt
+        elif re.search(r"Amazon|Shopping|Store|Mall", line, re.I):
+            categories["Shopping"] += amt
+        elif re.search(r"ATM|Cash", line, re.I):
+            categories["Cash"] += amt
+    return categories
+2️⃣ app.py (Full chatbot + OCR + file upload)
+Copy code
+Python
+import streamlit as st
+import pandas as pd
+import pickle
+import sqlite3
+import os
+import json
+from datetime import datetime
+
+from utils.recommendation_engine import get_recommendation
+from utils.detect import detect_module
+from utils.llm_fallback import llm_answer
+from utils.ocr_chat import (
+    extract_text,
+    extract_account_details,
+    credit_debit_balance,
+    explain_abbreviations,
+    expense_categorization
+)
+
+# ---------------- AUTH ----------------
+def load_user():
+    with open("user.json", "r") as f:
+        return json.load(f)
+
+def authenticate(username, password):
+    user = load_user()
+    return username == user["username"] and password == user["password"]
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Sign In"):
+        if authenticate(username, password):
+            st.session_state.logged_in = True
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
+    st.stop()
+
+# ---------------- DATABASE ----------------
+DB_PATH = "chat__hist.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            sender TEXT,
+            message TEXT,
+            timestamp DATETIME
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def create_new_session():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("INSERT INTO sessions DEFAULT VALUES")
+    sid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return sid
+
+def save_to_db(sender, message):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO chat (session_id, sender, message, timestamp) VALUES (?, ?, ?, ?)",
+        (st.session_state.session_id, sender, message, datetime.now())
+    )
+    conn.commit()
+    conn.close()
+
+def load_session(session_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT sender, message FROM chat WHERE session_id=? ORDER BY timestamp",
+        (session_id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    st.session_state.session_id = session_id
+    st.session_state.chat_history = rows
+
+init_db()
+
+# ---------------- MODELS ----------------
+vectorizer = pickle.load(open("models/vectorizer.pkl", "rb"))
+model = pickle.load(open("models/model.pkl", "rb"))
+label_encoder = pickle.load(open("models/label_encoder.pkl", "rb"))
+df_faq = pd.read_excel("data/FAQ_dataset.xlsx")
+
+def chatbot_faq(query):
+    try:
+        vec = vectorizer.transform([query])
+        probs = model.predict_proba(vec)[0]
+        if max(probs) < 0.2:
+            return None
+        pred = model.predict(vec)[0]
+        intent = label_encoder.inverse_transform([pred])[0]
+        ans = df_faq[df_faq["intent"] == intent]["answer"]
+        return ans.sample(1).values[0] if not ans.empty else None
+    except:
+        return None
+
+# ---------------- SESSION STATE ----------------
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_new_session()
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "ocr_text" not in st.session_state:
+    st.session_state.ocr_text = None
+
+# ---------------- CSS ----------------
+if os.path.exists("style.css"):
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# ---------------- MESSAGE HANDLER ----------------
+def submit_message():
+    msg = st.session_state.chat_input.strip()
+    if not msg:
+        return
+
+    if st.session_state.ocr_text:
+        lower = msg.lower()
+        if "credit" in lower and "debit" in lower:
+            c,d,b = credit_debit_balance(st.session_state.ocr_text)
+            reply = f"Total Credit: {c}\nTotal Debit: {d}\nAvailable Balance: {b}"
+        elif "abbreviation" in lower:
+            reply = "\n".join(explain_abbreviations(st.session_state.ocr_text)) or "No abbreviations found."
+        elif "expense" in lower:
+            exp = expense_categorization(st.session_state.ocr_text)
+            reply = f"Food: {exp['Food']}\nShopping: {exp['Shopping']}\nCash: {exp['Cash']}"
+        else:
+            reply = None
+        if reply:
+            st.session_state.chat_history.append(("You", msg))
+            st.session_state.chat_history.append(("Bot", reply))
+            save_to_db("You", msg)
+            save_to_db("Bot", reply)
+            st.session_state.chat_input = ""
+            return
+
+    parts = detect_module(msg)
+    responses = []
+    if parts.get("faq"):
+        faq = chatbot_faq(parts["faq"])
+        if faq:
+            responses.append(faq)
+    if parts.get("recommendation"):
+        rec = get_recommendation(parts["recommendation"])
+        if rec:
+            responses.append(rec)
+    if not responses:
+        responses.append(llm_answer(msg))
+    final = "\n\n".join(responses)
+    st.session_state.chat_history.append(("You", msg))
+    st.session_state.chat_history.append(("Bot", final))
+    save_to_db("You", msg)
+    save_to_db("Bot", final)
+    st.session_state.chat_input = ""
+
+# ---------------- UI ----------------
+st.set_page_config(page_title="Banking Chatbot", layout="wide")
+
+col1,col2 = st.columns([9,1])
+with col1:
+    st.markdown("<h2>Banking Chatbot</h2>", unsafe_allow_html=True)
+with col2:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+
+left, center = st.columns([1.3,3.7])
+with left:
+    st.markdown("### Chat History")
+    conn = sqlite3.connect(DB_PATH)
+    sessions = pd.read_sql("SELECT session_id FROM sessions ORDER BY session_id DESC", conn)
+    conn.close()
+    for sid in sessions["session_id"]:
+        if st.button(f"Conversation {sid}", key=f"s{sid}"):
+            load_session(sid)
+            st.rerun()
+
+with center:
+    st.markdown("<div class='chat-box'>", unsafe_allow_html=True)
+    for sender,msg in st.session_state.chat_history:
+        if sender=="You":
+            st.markdown(f"<div class='message user'>{msg}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='message bot'>{msg}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    col_msg,col_plus = st.columns([9,1])
+    with col_msg:
+        st.text_input("", key="chat_input", placeholder="Type message and press Enter", on_change=submit_message)
+    with col_plus:
+        uploaded_file = st.file_uploader("", type=["pdf","jpg","jpeg"], label_visibility="collapsed")
+
+    col1,col2 = st.columns([2,1])
+    with col1:
+        if st.button("Send"):
+            submit_message()
+    with col2:
+        if st.button("Reset"):
+            st.session_state.session_id = create_new_session()
+            st.session_state.chat_history = []
+            st.session_state.ocr_text = None
+            st.rerun()
+
+    st.markdown("<div style='color:green;font-size:12px;margin-top:6px;text-align:right;'>If you want to reset conversation, click Reset button.</div>", unsafe_allow_html=True)
+
+    if uploaded_file:
+        if uploaded_file.type not in ["application/pdf","image/jpeg","image/jpg"]:
+            st.error("Please upload PDF, JPG or JPEG only.")
+        else:
+            text = extract_text(uploaded_file)
+            st.session_state.ocr_text = text
+            name, acc_no = extract_account_details(text)
+            bot_msg = f"Bank statement uploaded successfully.\n\nName: {name}\nAccount Number: {acc_no}\n\nChoose one option:\n1. credit debit summary\n2. abbreviation explanation\n3. expense categorization"
+            st.session_state.chat_history.append(("You","Uploaded bank statement"))
+            st.session_state.chat_history.append(("Bot",bot_msg))
+            save_to_db("You","Uploaded bank statement")
+            save_to_db("Bot",bot_msg)
+            st.rerun()
+This fully integrates OCR + Chatbot + PDF/Image upload and works without Poppler.
+If you want, I can also add 1-click buttons inside the chat for the 3 OCR options so the user doesn’t need to type “credit debit” etc — fully clickable UI.
+Do you want me to do that next?
