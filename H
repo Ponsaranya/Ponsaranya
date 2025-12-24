@@ -1,0 +1,85 @@
+import pandas as pd
+from detect import detect_intent   # USING YOUR EXISTING detect.py
+
+
+# ---------------- LOAD DATA ---------------- #
+
+FAQ_FILE = "faq_dataset.xlsx"
+REC_FILE = "recommendation_dataset.csv"
+
+faq_df = pd.read_excel(FAQ_FILE)
+rec_df = pd.read_csv(REC_FILE)
+
+
+# ---------------- FAQ SEARCH ---------------- #
+
+def search_faq(query):
+    for _, row in faq_df.iterrows():
+        if row["question"].lower() in query.lower():
+            return row["answer"]
+    return None
+
+
+# ---------------- RECOMMENDATION SEARCH ---------------- #
+
+def search_recommendation(query):
+    intent = detect_intent(query)
+
+    for _, row in rec_df.iterrows():
+        if row["intent"].lower() == intent.lower():
+            return row["recommendation"]
+
+    return None
+
+
+# ---------------- HALLUCINATION CHECK ---------------- #
+
+def hallucination_check(query):
+    """
+    Returns:
+    response, source
+    """
+
+    # 1. FAQ
+    faq_answer = search_faq(query)
+    if faq_answer:
+        return faq_answer, "FAQ"
+
+    # 2. Recommendation
+    rec_answer = search_recommendation(query)
+    if rec_answer:
+        return rec_answer, "RECOMMENDATION"
+
+    # 3. Hallucination
+    return (
+        "No verified data found for this query. "
+        "Answering this may lead to hallucination.",
+        "HALLUCINATION"
+    )
+
+
+# ---------------- AUTO TEST CASES ---------------- #
+
+def run_tests():
+    test_queries = [
+        "what is 6D repository",
+        "suggest a loan type for C7833983",
+        "who will win the next world war"
+    ]
+
+    print("\n===== HALLUCINATION TEST RESULTS =====\n")
+
+    for i, query in enumerate(test_queries, start=1):
+        answer, source = hallucination_check(query)
+
+        print(f"Test {i}")
+        print("User Query :", query)
+        print("Bot Reply  :", answer)
+        print("Source     :", source)
+        print("-" * 50)
+
+
+# ---------------- MAIN ---------------- #
+
+if __name__ == "__main__":
+    run_tests()
