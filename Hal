@@ -1,0 +1,100 @@
+Perfect! Thanks for clarifying. That means we can make the hallucination checker handle both datasets separately:
+FAQ dataset (FAQ_dataset.xlsx) → For FAQ queries.
+Recommendation dataset (recommendation_dataset.csv) → For recommendation queries.
+We’ll check hallucinations like this:
+Logic for Each Module
+Module
+Dataset
+Hallucination check
+FAQ
+FAQ_dataset.xlsx
+Compare bot answer with FAQ answers using cosine similarity. If similarity < threshold → hallucination.
+Recommendation
+recommendation_dataset.csv
+Check if the suggested product exists in the dataset. If not → hallucination.
+LLM fallback
+None
+Domain check: does the answer contain banking-related keywords? If not → hallucination.
+Hallucination Checker with Two Datasets
+Copy code
+Python
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from utils.detect import detect_module
+from utils.recommendation_engine import get_recommendation
+from utils.llm_fallback import llm_answer
+
+# ---------- Load Datasets ----------
+faq_df = pd.read_excel("data/FAQ_dataset.xlsx")
+rec_df = pd.read_csv("data/recommendation_dataset.csv")
+
+# Vectorizer for FAQ similarity
+vectorizer = TfidfVectorizer().fit(faq_df['answer'].values)
+
+# ---------- Functions ----------
+def is_hallucination(bot_answer, expected_answers, threshold=0.7):
+    if not expected_answers:
+        return True
+    bot_vec = vectorizer.transform([bot_answer])
+    exp_vecs = vectorizer.transform(expected_answers)
+    sim = cosine_similarity(bot_vec, exp_vecs).max()
+    return sim < threshold
+
+def check_query(query):
+    """
+    Returns bot answer, type (FAQ / Recommendation / LLM), hallucination flag
+    """
+    parts = detect_module(query)
+    hallucinated = False
+    answer_type = "LLM"
+
+    if parts.get("faq"):
+        expected_answers = faq_df[faq_df['intent'] == parts["faq"]]['answer'].tolist()
+        bot_answer = expected_answers[0] if expected_answers else "No FAQ answer found"
+        hallucinated = is_hallucination(bot_answer, expected_answers)
+        answer_type = "FAQ"
+
+    elif parts.get("recommendation"):
+        bot_answer = get_recommendation(parts["recommendation"])
+        # Check if bot_answer matches any product in recommendation dataset
+        rec_products = rec_df['Product'].tolist()
+        hallucinated = not any(prod.lower() in bot_answer.lower() for prod in rec_products)
+        answer_type = "Recommendation"
+
+    else:
+        bot_answer = llm_answer(query)
+        banking_keywords = ["loan","account","interest","credit","debit","investment"]
+        hallucinated = not any(k in bot_answer.lower() for k in banking_keywords)
+        answer_type = "LLM"
+
+    return {
+        "Query": query,
+        "Bot Answer": bot_answer,
+        "Answer Type": answer_type,
+        "Hallucination": hallucinated
+    }
+
+def check_queries_batch(queries):
+    results = [check_query(q) for q in queries]
+    return pd.DataFrame(results)
+
+# ---------- Sample Usage ----------
+if __name__ == "__main__":
+    test_queries = [
+        "What is the savings interest rate?",      # FAQ
+        "Which loan should I take?",              # Recommendation
+        "Who won the football match yesterday?",  # LLM fallback
+        "Can I invest in Bitcoin through bank?"   # LLM fallback
+    ]
+
+    df_results = check_queries_batch(test_queries)
+    print(df_results)
+    df_results.to_csv("hallucination_report.csv", index=False)
+Key Notes
+FAQ_dataset.xlsx → must have columns: intent, answer
+recommendation_dataset.csv → must have column: Product (or similar)
+detect_module(query) → decides if the query is FAQ / Recommendation / LLM
+Outputs DataFrame with each query’s bot answer and hallucination status
+If you want, I can enhance this further to handle multi-word product matches in recommendations and fuzzy matching so it doesn’t falsely mark correct answers as hallucinations.
+Do you want me to do that next?
