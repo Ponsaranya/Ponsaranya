@@ -1,0 +1,47 @@
+Ah! Perfect — now I completely understand. ✅
+Here’s the flow you want in your chatbot-integrated OCR:
+User uploads PDF/JPG → Bot replies:
+Copy code
+
+Bank statement uploaded successfully.  
+Name: <Full Name>  
+Account Number: <Full Account Number>  
+Choose one option:  
+1. Credit / Debit Summary  
+2. Abbreviation Explanation  
+3. Expense Categorization
+User types 1 and presses Enter → Bot replies with total credit, total debit, available balance.
+User types 2 and presses Enter → Bot replies with all abbreviations found in transactions.
+User types 3 and presses Enter → Bot replies with expense categorization, e.g.,
+Copy code
+
+Food: 3500  
+Shopping: 4200  
+Cash: 2000
+All messages (upload, user input, bot replies) are saved in DB.
+No Tesseract or admin install → only EasyOCR + pdfplumber.
+How to implement in your current chatbot
+When a file is uploaded, store the OCR text in st.session_state.ocr_text.
+After the bot replies with name/account + options, check the next user input:
+Copy code
+Python
+msg = st.session_state.chat_input.strip()
+if msg in ["1","2","3"]:
+    # call appropriate function from utils.py
+    if msg=="1":
+        c,d,b = credit_debit_balance(st.session_state.ocr_text)
+        reply = f"Total Credit: {c}\nTotal Debit: {d}\nAvailable Balance: {b}"
+    elif msg=="2":
+        reply = "\n".join(find_abbreviations(df))
+    elif msg=="3":
+        reply = "\n".join(expense_categorization(df))
+    st.session_state.chat_history.append(("Bot", reply))
+    save_to_db("Bot", reply)
+df is the transaction DataFrame you create after extracting OCR text.
+This approach keeps everything in the chat interface, no separate radio buttons needed.
+If you want, I can rewrite your full app.py + utils/ocr_chat.py exactly like your chatbot so:
+Upload bank statement → bot replies with name/account + options.
+User types 1/2/3 → bot replies appropriately.
+Chat history + DB integration fully works.
+Only Python-level OCR (EasyOCR + pdfplumber).
+Do you want me to do that now?
