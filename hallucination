@@ -1,0 +1,91 @@
+import os
+import sys
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# ------------------ Make utils folder accessible ------------------
+# This works even if there is no __init__.py
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+
+from utils.detect import detect_module
+from utils.recommendation_engine import get_recommendation
+from utils.llm_fallback import llm_answer
+
+# ------------------ Load Datasets ------------------
+faq_df = pd.read_excel(os.path.join(PROJECT_ROOT, "data/FAQ_dataset.xlsx"))
+rec_df = pd.read_csv(os.path.join(PROJECT_ROOT, "data/recommendation_dataset.csv"))
+
+# Vectorizer for FAQ similarity
+vectorizer = TfidfVectorizer().fit(faq_df['answer'].astype(str).values)
+
+# ------------------ Helper Functions ------------------
+def is_hallucination(bot_answer, expected_answers, threshold=0.7):
+    """Check if bot answer is hallucinated using cosine similarity"""
+    if not expected_answers:
+        return True
+    bot_vec = vectorizer.transform([bot_answer])
+    exp_vecs = vectorizer.transform(expected_answers)
+    sim = cosine_similarity(bot_vec, exp_vecs).max()
+    return sim < threshold
+
+def check_query(query):
+    """Check one query for hallucination"""
+    parts = detect_module(query)
+    hallucinated = False
+    answer_type = "LLM"
+    bot_answer = ""
+
+    # -------- FAQ --------
+    if parts.get("faq"):
+        intent = parts["faq"].strip().lower()
+        # Case-insensitive match
+        expected_answers = faq_df[faq_df['intent'].str.lower() == intent]['answer'].astype(str).tolist()
+        if expected_answers:
+            bot_answer = expected_answers[0]
+            hallucinated = is_hallucination(bot_answer, expected_answers)
+        else:
+            bot_answer = "No FAQ answer found"
+            hallucinated = True
+        answer_type = "FAQ"
+
+    # -------- Recommendation --------
+    elif parts.get("recommendation"):
+        bot_answer = get_recommendation(parts["recommendation"])
+        rec_products = rec_df['Product'].astype(str).tolist()
+        # Check if any product name exists in bot answer (case-insensitive)
+        hallucinated = not any(prod.lower() in bot_answer.lower() for prod in rec_products)
+        answer_type = "Recommendation"
+
+    # -------- LLM fallback --------
+    else:
+        bot_answer = llm_answer(query)
+        banking_keywords = ["loan","account","interest","credit","debit","investment","bank"]
+        hallucinated = not any(k in bot_answer.lower() for k in banking_keywords)
+        answer_type = "LLM"
+
+    return {
+        "Query": query,
+        "Bot Answer": bot_answer,
+        "Answer Type": answer_type,
+        "Hallucination": hallucinated
+    }
+
+def check_queries_batch(queries):
+    """Check multiple queries at once"""
+    results = [check_query(q) for q in queries]
+    return pd.DataFrame(results)
+
+# ------------------ Example Usage ------------------
+if __name__ == "__main__":
+    test_queries = [
+        "What is the savings interest rate?",      # FAQ
+        "Which loan should I take?",               # Recommendation
+        "Who won the football match yesterday?",  # LLM fallback
+        "Can I invest in Bitcoin through bank?"   # LLM fallback
+    ]
+
+    df_results = check_queries_batch(test_queries)
+    print(df_results)
+    df_results.to_csv("hallucination_report.csv", index=False)
