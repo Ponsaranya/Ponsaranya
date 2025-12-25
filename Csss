@@ -1,0 +1,58 @@
+Ah! I see exactly what’s happening. The extra empty spaces on the left and right are coming from Streamlit’s default column padding and container margins. Even if you set your .chat-box to full width, Streamlit wraps it inside its layout, which adds padding.
+To fix this, you need two things:
+1️⃣ Override Streamlit container padding via CSS
+Add this to your style.css:
+Copy code
+Css
+/* Remove default Streamlit padding for main container */
+.css-18e3th9 {  /* Streamlit main container class, may vary by version */
+    padding-left: 0rem !important;
+    padding-right: 0rem !important;
+}
+
+/* Optional: remove padding for columns */
+.css-1d391kg {  /* Left column */
+    padding-left: 0rem !important;
+}
+.css-1d391kg + .css-1d391kg {  /* Center column */
+    padding-right: 0rem !important;
+}
+⚠️ Streamlit class names (like .css-18e3th9) can vary with versions. You can inspect in your browser (right click → Inspect → see the container div) and adjust.
+2️⃣ Make your chat container full width
+In your app.py, update the chat container div:
+Copy code
+Python
+with center:
+    # Full width chat container
+    st.markdown('<div class="chat-box" style="width:100%; max-width:100%; margin:0; padding:10px;">', unsafe_allow_html=True)
+
+    for s, m in st.session_state.chat_history:
+        if s == "You":
+            st.markdown(f'<div class="message user">{m}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="message bot">{m}</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+✅ Extra tips
+You can set max-width: 100% for .chat-box in CSS.
+For the messages, you can also add:
+Copy code
+Css
+.user {
+    float: right;
+    margin-left: auto; /* push to right */
+}
+
+.bot {
+    float: left;
+    margin-right: auto; /* push to left */
+}
+For a full-width screen, you can also set:
+Copy code
+Css
+body > .main > div {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+If you want, I can rewrite your entire CSS + app.py chat column section so it will be full-screen, user right, bot left, no extra padding, ready to use.
+Do you want me to do that?
