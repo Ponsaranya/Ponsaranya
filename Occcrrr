@@ -1,0 +1,172 @@
+import streamlit as st
+import easyocr
+import re
+import pandas as pd
+from PIL import Image
+import pdfplumber
+
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(page_title="Banking OCR ChatBot", layout="wide")
+
+# -----------------------------
+# LOAD CSS (OUTSIDE STATIC)
+# -----------------------------
+with open("style.css") as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# -----------------------------
+# SESSION STATE
+# -----------------------------
+if "ocr_text" not in st.session_state:
+    st.session_state.ocr_text = ""
+
+if "summary_ready" not in st.session_state:
+    st.session_state.summary_ready = False
+
+# -----------------------------
+# OCR FUNCTIONS
+# -----------------------------
+reader = easyocr.Reader(['en'], gpu=False)
+
+def extract_text_from_pdf(file):
+    text = ""
+    with pdfplumber.open(file) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    return text
+
+def extract_text_from_image(file):
+    image = Image.open(file)
+    result = reader.readtext(image, detail=0)
+    return " ".join(result)
+
+# -----------------------------
+# DATA EXTRACTION
+# -----------------------------
+def extract_name_account(text):
+    name_match = re.search(r"Name\s*[:\-]?\s*([A-Za-z\s]+)", text)
+    acc_match = re.search(r"Account\s*Number\s*[:\-]?\s*(\d+)", text)
+
+    name = name_match.group(1).strip() if name_match else "Not Found"
+    acc = acc_match.group(1).strip() if acc_match else "Not Found"
+
+    return name, acc
+
+def extract_amounts(text):
+    debit = sum(map(float, re.findall(r"Debit\s*[:\-]?\s*(\d+\.?\d*)", text)))
+    credit = sum(map(float, re.findall(r"Credit\s*[:\-]?\s*(\d+\.?\d*)", text)))
+    balance = credit - debit
+    return debit, credit, balance
+
+def expense_summary():
+    return {
+        "Food": 1500,
+        "Shopping": 2480,
+        "Travel": 800
+    }
+
+def abbreviation_summary():
+    return {
+        "ATM": "Automated Teller Machine",
+        "NEFT": "National Electronic Funds Transfer",
+        "IMPS": "Immediate Payment Service"
+    }
+
+# -----------------------------
+# UI HEADER
+# -----------------------------
+st.markdown("<h2>💬 Banking OCR ChatBot</h2>", unsafe_allow_html=True)
+
+# -----------------------------
+# INPUT + UPLOAD UI
+# -----------------------------
+input_col, upload_col = st.columns([6, 1])
+
+with input_col:
+    user_input = st.text_input(
+        "",
+        placeholder="Ask something or upload a bank statement...",
+        label_visibility="collapsed"
+    )
+
+with upload_col:
+    uploaded_file = st.file_uploader(
+        "",
+        type=["pdf", "png", "jpg"],
+        label_visibility="collapsed"
+    )
+
+# -----------------------------
+# BUTTONS
+# -----------------------------
+send_col, reset_col = st.columns(2)
+
+with send_col:
+    send = st.button("Send")
+
+with reset_col:
+    reset = st.button("Reset")
+
+# -----------------------------
+# RESET (DO NOT CHANGE LOGIC)
+# -----------------------------
+if reset:
+    st.session_state.ocr_text = ""
+    st.session_state.summary_ready = False
+    st.success("Conversation reset")
+
+# -----------------------------
+# FILE UPLOAD HANDLING
+# -----------------------------
+if uploaded_file:
+    if uploaded_file.type == "application/pdf":
+        text = extract_text_from_pdf(uploaded_file)
+    else:
+        text = extract_text_from_image(uploaded_file)
+
+    st.session_state.ocr_text = text
+    st.session_state.summary_ready = True
+
+    st.success("✅ Your bank statement has been successfully uploaded.")
+    st.write("Choose any option:")
+    st.write("1️⃣ Credit / Debit Summary with Balance")
+    st.write("2️⃣ Abbreviations Summary")
+    st.write("3️⃣ Expense Categorization")
+
+# -----------------------------
+# CHAT LOGIC
+# -----------------------------
+if send and st.session_state.summary_ready:
+
+    text = st.session_state.ocr_text
+    name, acc_no = extract_name_account(text)
+    debit, credit, balance = extract_amounts(text)
+
+    if user_input == "1":
+        st.write(f"**Account Holder Name:** {name}")
+        st.write(f"**Account Number:** {acc_no}")
+        st.write("---")
+        st.write(f"**Debit Summary:** ₹{debit}")
+        st.write(f"**Credit Summary:** ₹{credit}")
+        st.write(f"**Available Balance:** ₹{balance}")
+
+    elif user_input == "2":
+        st.write("### Abbreviations Found:")
+        for k, v in abbreviation_summary().items():
+            st.write(f"**{k}** : {v}")
+
+    elif user_input == "3":
+        st.write("### Expense Summary:")
+        for k, v in expense_summary().items():
+            st.write(f"{k} expenses: ₹{v}")
+
+    else:
+        st.warning("Please choose 1, 2, or 3")
+
+# -----------------------------
+# FALLBACK (LLM PLACEHOLDER)
+# -----------------------------
+elif send and not st.session_state.summary_ready:
+    st.write("🤖 I can help with banking FAQs and product recommendations.")
