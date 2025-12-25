@@ -1,0 +1,15 @@
+with center:
+    # Start chat container
+    st.markdown('<div class="chat-box">', unsafe_allow_html=True)
+
+    for s, m in st.session_state.chat_history:
+        if s == "You":
+            st.markdown(f'<div class="message user">{m}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="message bot">{m}</div>', unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Input and file uploader columns
+    input_col, upload_col = st.columns([9,4])
+    ...
