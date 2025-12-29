@@ -1,0 +1,100 @@
+Perfect 👍
+You already have a header container with background color.
+You just need to split that header into columns and place an image on the left side.
+I’ll show you exactly where and what to change.
+📍 WHERE TO CHANGE
+This is your current header code:
+Copy code
+Python
+col1,col2 = st.columns([9,1])
+with col1:
+    st.markdown("""
+    <div style="background-color: #36454F; color:white; padding:5px 2px;
+    border-radius:8px;text-align:center;">
+        <h1 style='margin:0;'>Banking Chatbot</h1>
+        <p style ="margin:0;">Ask about banking and product suggestions</p>
+    </div>
+    """,unsafe_allow_html=True)
+✅ WHAT YOU SHOULD DO INSTEAD
+🔹 Step 1: Put your image file
+Place your image in your project folder, for example:
+Copy code
+
+assets/logo.png
+🔹 Step 2: Replace header code with this
+Copy code
+Python
+col1, col2 = st.columns([9, 1])
+
+with col1:
+    st.markdown(
+        """
+        <div style="
+            background-color:#36454F;
+            color:white;
+            padding:10px;
+            border-radius:8px;
+            display:flex;
+            align-items:center;
+            gap:15px;
+        ">
+            <img src="data:image/png;base64,{img}" 
+                 style="height:50px; width:50px; border-radius:8px;" />
+            <div>
+                <h2 style="margin:0;">Banking Chatbot</h2>
+                <p style="margin:0; font-size:14px;">
+                    Ask about banking and product suggestions
+                </p>
+            </div>
+        </div>
+        """.format(img=st.session_state.logo),
+        unsafe_allow_html=True
+    )
+
+with col2:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+🔹 Step 3: Load image as base64 (IMPORTANT)
+📍 Add this once, near the top of your file
+Copy code
+Python
+import base64
+
+def load_image_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+if "logo" not in st.session_state:
+    st.session_state.logo = load_image_base64("assets/logo.png")
+🟢 RESULT YOU WILL GET
+✔ Image on top-left
+✔ Title + subtitle on the right of image
+✔ Same background color
+✔ Clean professional header
+✔ No layout breaking
+🧠 Why base64 is needed
+Streamlit HTML cannot directly read local image paths.
+Base64 embeds the image safely inside HTML.
+🔥 OPTIONAL UI POLISH
+You can tweak image size easily:
+Copy code
+Css
+height: 45px;
+width: 45px;
+Or make it circular:
+Copy code
+Css
+border-radius: 50%;
+✅ Mentor-friendly & production-ready
+This approach is:
+Clean
+Stable
+Works across Streamlit versions
+No hacks
+If you want next:
+Add bank logo dynamically based on statement
+Sticky header (doesn’t scroll)
+Gradient background
+Mobile responsive header
+Just tell me 👍
