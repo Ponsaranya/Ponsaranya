@@ -1,0 +1,51 @@
+header_col, logout_col = st.columns([10, 1])
+
+with header_col:
+    st.markdown(
+        f"""
+        <div style="
+            background-color:#36454F;
+            color:white;
+            padding:10px 16px;
+            border-radius:8px;
+            height:80px;
+
+            display:flex;
+            align-items:center;
+        ">
+            <div style="
+                display:flex;
+                align-items:center;
+                gap:15px;
+                height:100%;
+            ">
+                <img src="data:image/png;base64,{st.session_state.logo}"
+                     style="
+                        height:50px;
+                        width:50px;
+                        display:block;
+                     "/>
+
+                <div style="
+                    display:flex;
+                    flex-direction:column;
+                    justify-content:center;
+                    height:50px;
+                ">
+                    <div style="font-size:22px; font-weight:600; line-height:1;">
+                        Banking Chatbot
+                    </div>
+                    <div style="font-size:14px; line-height:1.2; opacity:0.9;">
+                        Ask about banking and product suggestions
+                    </div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with logout_col:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
