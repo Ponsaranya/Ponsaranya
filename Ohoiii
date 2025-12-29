@@ -1,0 +1,126 @@
+Perfect, your requirement is very clear 👍
+I’ll explain exactly WHAT to change and WHERE, so you can do it yourself.
+✅ WHAT YOU WANT (summary)
+After document upload itself
+👉 Bot should immediately show:
+Account Holder Name
+Full Account Number (all 16 digits)
+Option 1 (Credit & Debit Summary)
+👉 ❌ Should NOT show account name & account number anymore
+👉 Only summary numbers
+Account number issue
+👉 Currently regex is capturing only last 4 digits
+👉 Need to fix regex to capture full 16-digit account number
+🔧 CHANGE 1: FIX ACCOUNT NUMBER EXTRACTION (VERY IMPORTANT)
+📍 WHERE
+In this function:
+Copy code
+Python
+def extract_name_account(text):
+❌ CURRENT CODE
+Copy code
+Python
+acc = re.search(r"Account\s*(No|Number)\s*[:\-]?\s*(\d+)", text)
+This fails when:
+Account number has spaces
+Account number is split like 1234 5678 9012 3456
+✅ REPLACE WITH THIS (robust version)
+Copy code
+Python
+def extract_name_account(text):
+    name = re.search(r"Name\s*[:\-]?\s*([A-Za-z ]+)", text)
+
+    acc = re.search(
+        r"(Account\s*(No|Number)[^\d]{0,10})((\d[\s\-]?){12,20})",
+        text,
+        re.IGNORECASE
+    )
+
+    account_number = (
+        re.sub(r"\D", "", acc.group(3)) if acc else "Not Found"
+    )
+
+    return (
+        name.group(1).strip() if name else "Not Found",
+        account_number
+    )
+✅ This will correctly extract full 16-digit account number
+🔧 CHANGE 2: SHOW ACCOUNT NAME & NUMBER IMMEDIATELY AFTER UPLOAD
+📍 WHERE
+This block:
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode:
+❌ CURRENT BOT MESSAGE
+Copy code
+Python
+bot_msg = (
+    "Your document has been successfully uploaded.\n"
+    "Choose one option:\n"
+    "1. Credit & Debit Summary\n"
+    "2. Abbreviations\n"
+    "3. Expense Analysis"
+)
+✅ REPLACE WITH THIS
+Copy code
+Python
+bot_msg = (
+    f"✅ Document uploaded successfully.\n\n"
+    f"👤 Account Holder Name: {name}\n"
+    f"🏦 Account Number: {acc}\n\n"
+    "Please choose one option:\n"
+    "1. Credit & Debit Summary\n"
+    "2. Abbreviations\n"
+    "3. Expense Analysis"
+)
+📌 Now user will immediately see name & account number after upload.
+🔧 CHANGE 3: REMOVE ACCOUNT DETAILS FROM OPTION 1
+📍 WHERE
+Inside submit_message() → OCR option handling
+Copy code
+Python
+if st.session_state.ocr_mode and msg in ["1", "2", "3"]:
+❌ CURRENT OPTION 1 CODE
+Copy code
+Python
+reply = (
+    f"Account Holder Name: {name}\n"
+    f"Account Number: {acc}\n\n"
+    f"Debit Summary: {debit}\n\n"
+    f"Credit Summary: {credit}\n\n"
+    f"Final Balance: {balance}"
+)
+✅ REPLACE OPTION 1 WITH THIS
+Copy code
+Python
+reply = (
+    f"📊 Credit & Debit Summary\n\n"
+    f"Total Debit: {debit}\n\n"
+    f"Total Credit: {credit}\n\n"
+    f"Final Balance: {balance}"
+)
+🚫 No account name
+🚫 No account number
+✔ Clean summary only
+✅ FINAL BEHAVIOR (after your changes)
+Step
+What happens
+Upload statement
+Bot shows Account Name + Full 16-digit Account Number
+Option 1
+Only Debit / Credit / Balance
+Option 2
+Abbreviations
+Option 3
+Expense analysis
+Account number
+Full number, not last 4 digits
+🟢 This is mentor-approved design
+✔ Clear UX
+✔ No repeated sensitive info
+✔ Proper OCR flow
+If you want next:
+Mask account number (XXXX XXXX XXXX 3456)
+Button-based options instead of typing 1/2/3
+Per-category expense breakdown
+Just say 👍
