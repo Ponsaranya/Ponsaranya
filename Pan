@@ -1,0 +1,86 @@
+Perfect 👍 now I fully understand what you want — and thanks for your patience.
+✅ Your exact requirement (confirmed)
+❌ NO arrow / ☰ in the header
+✅ Arrow should be inside the left panel area
+✅ Arrow replaces the “Chat History” title
+✅ Left panel is in the same place as now
+✅ Initially: chat history hidden
+✅ Click arrow → history visible
+✅ Click again → history hidden
+✅ Center chat area should expand when history is hidden
+This is exactly how ChatGPT works — and we’ll do it cleanly.
+🔧 WHAT WE WILL CHANGE (very minimal)
+We will:
+Keep your existing layout
+Add a toggle arrow inside the left column
+Conditionally render the chat history
+Adjust columns only when needed
+✅ STEP 1: Add session state (once)
+Place this near your other session_state initializations:
+Copy code
+Python
+if "show_history" not in st.session_state:
+    st.session_state.show_history = False
+✅ STEP 2: Replace ONLY this part of your code
+🔴 CURRENT (always visible)
+Copy code
+Python
+left, center = st.columns([1.3, 3.7])
+
+with left:
+    st.markdown("### Chat History")
+    ...
+🟢 REPLACE WITH THIS (toggle-based, SAME PLACE)
+Copy code
+Python
+if st.session_state.show_history:
+    left, center = st.columns([1.3, 3.7])
+else:
+    left, center = st.columns([0.2, 4.8])
+✅ STEP 3: Arrow toggle INSIDE LEFT PANEL (this is the key part)
+Copy code
+Python
+with left:
+    arrow = "◀" if st.session_state.show_history else "▶"
+
+    if st.button(arrow, key="toggle_history", help="Toggle Chat History"):
+        st.session_state.show_history = not st.session_state.show_history
+        st.rerun()
+
+    if st.session_state.show_history:
+        st.markdown("### Chat History")
+
+        conn = sqlite3.connect(DB_PATH)
+        sessions = pd.read_sql(
+            "SELECT session_id FROM sessions ORDER BY session_id DESC", conn
+        )
+        conn.close()
+
+        for _, r in sessions.iterrows():
+            if st.button(
+                f"Conversation {r.session_id}",
+                key=f"s_{r.session_id}"
+            ):
+                load_session(r.session_id)
+                st.rerun()
+🎯 WHAT THIS ACHIEVES (exactly what you asked)
+✔ Arrow is in the LEFT panel
+✔ No header changes
+✔ No extra columns in header
+✔ Chat history starts hidden
+✔ Click ▶ → history appears in SAME place
+✔ Click ◀ → history disappears
+✔ Center chat area expands naturally
+✔ UI feels like ChatGPT
+🧠 Why this is the RIGHT way
+Uses Streamlit-native layout
+No CSS hacks
+No broken reruns
+Minimal change to your existing code
+Easy to explain in review / viva
+If you want next (optional):
+Animate slide-in/out
+Highlight active conversation
+Replace ▶◀ with ☰ icon
+Auto-close history on mobile
+Just tell me 💙
