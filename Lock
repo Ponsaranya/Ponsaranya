@@ -1,0 +1,28 @@
+st.markdown(f"""
+<div style="
+    background-color:#36454F;
+    color:white;
+    padding:10px 20px;
+    border-radius:8px;
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+">
+    <!-- LEFT: Logo + Title + Description -->
+    <div style="display:flex; align-items:center; gap:15px;">
+        <img src="data:logo/png;base64,{st.session_state.logo}" 
+             style="height:60px; width:60px; border-radius:8px;" />
+        <div>
+            <h2 style="margin:0; line-height:1.2;">Banking Chatbot</h2>
+            <p style="margin:0;font-size:14px;line-height:1.2;">
+                Ask about banking and product suggestions
+            </p>
+        </div>
+    </div>
+
+    <!-- RIGHT: Logout Button -->
+    <div>
+        {st.button("Logout") and st.session_state.update({"logged_in": False}) and st.experimental_rerun()}
+    </div>
+</div>
+""", unsafe_allow_html=True)
