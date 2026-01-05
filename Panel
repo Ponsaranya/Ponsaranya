@@ -1,0 +1,103 @@
+Perfect, thanks for sharing the code 👍
+You explained the requirement very clearly, and your code is already well-structured. We just need to add a toggle (☰ / ◀) using st.session_state and conditionally render the left chat-history column.
+I’ll explain what will happen, then give you exact code changes (minimal & safe).
+✅ What we are going to achieve
+Chat history NOT visible initially
+A ☰ (menu / arrow) button in the header
+Click once → Chat History appears
+Click again → Chat History hides
+Background stays clean & visible
+Layout does not break
+Logout stays inside the header column
+🧠 Core idea (simple logic)
+We use:
+Copy code
+Python
+st.session_state.show_history = False
+Then:
+Button toggles True / False
+Left column is rendered only if True
+🔧 STEP 1: Add session state (IMPORTANT)
+Put this near your other session_state initializations:
+Copy code
+Python
+if "show_history" not in st.session_state:
+    st.session_state.show_history = False
+🔧 STEP 2: Header — add ☰ toggle button INSIDE header row
+Replace this part 👇
+Copy code
+Python
+col1,col2 = st.columns([9,1])
+With this 👇
+Copy code
+Python
+col1, col2, col3 = st.columns([8,1,1])
+🔁 Update header code (ONLY small change)
+Inside col1, keep your header as-is
+Inside col2, add toggle button
+Inside col3, keep logout
+Copy code
+Python
+with col2:
+    if st.button("☰", help="Toggle Chat History"):
+        st.session_state.show_history = not st.session_state.show_history
+        st.rerun()
+
+with col3:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+✔️ Now:
+☰ is inside header row
+Logout is inside header row
+Same background visually
+🔧 STEP 3: Conditionally show Chat History panel
+❌ REMOVE this always-visible layout:
+Copy code
+Python
+left, center = st.columns([1.3, 3.7])
+✅ REPLACE with this toggle-based layout:
+Copy code
+Python
+if st.session_state.show_history:
+    left, center = st.columns([1.3, 3.7])
+else:
+    center = st.container()
+🔧 STEP 4: Wrap chat history inside condition
+Replace this 👇
+Copy code
+Python
+with left:
+    st.markdown("### Chat History")
+    ...
+With this 👇
+Copy code
+Python
+if st.session_state.show_history:
+    with left:
+        st.markdown("### Chat History")
+        conn = sqlite3.connect(DB_PATH)
+        sessions = pd.read_sql(
+            "SELECT session_id FROM sessions ORDER BY session_id DESC", conn
+        )
+        conn.close()
+
+        for _, r in sessions.iterrows():
+            if st.button(f"Conversation {r.session_id}", key=f"s_{r.session_id}"):
+                load_session(r.session_id)
+                st.rerun()
+🎯 Final Behavior (Exactly like ChatGPT)
+✔ On login → No chat history visible
+✔ Click ☰ → Chat history slides in
+✔ Click ☰ again → Chat history disappears
+✔ Background stays white & clean
+✔ Header stays single-row
+✔ Logout stays aligned
+🟢 Optional polish (if you want later)
+Replace ☰ with ▶ / ◀
+Add CSS slide animation
+Highlight selected conversation
+If you want:
+💬 “Make it slide smoothly like ChatGPT”
+💬 “Move toggle to left edge”
+Just tell me — your base is now perfect 👌
