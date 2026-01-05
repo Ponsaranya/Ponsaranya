@@ -1,0 +1,128 @@
+Perfect 👍 no worries — I’ll guide you step-by-step, exactly what to add, where to add, and nothing extra.
+You will not rewrite the whole file. You’ll just add 3 small parts.
+✅ GOAL (simple words)
+If invalid PDF / non-bank statement is uploaded:
+Show error only once
+❌ No infinite loop
+❌ No repeated messages
+Stop until user changes file or clicks Reset
+🧩 PART 1 — Add ONE session variable (VERY IMPORTANT)
+📍 Where to add
+Find this section in your code:
+Copy code
+Python
+# session state
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_new_session()
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+⬇️ ADD THIS JUST BELOW IT
+Copy code
+Python
+if "invalid_upload_handled" not in st.session_state:
+    st.session_state.invalid_upload_handled = False
+✅ Done with Part 1
+🧩 PART 2 — Modify ONLY the upload logic
+📍 Find this block in your code
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode:
+    text = extract_text(uploaded)
+    df = extract_transactions(text)
+    name, acc = extract_name_account(text)
+🔁 REPLACE THAT BLOCK WITH THIS (copy-paste)
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode and not st.session_state.invalid_upload_handled:
+    text = extract_text(uploaded)
+    df = extract_transactions(text)
+    name, acc = extract_name_account(text)
+
+    # ❌ INVALID BANK STATEMENT
+    if name == "Not Found" or acc == "Not Found" or df.empty:
+        error_msg = (
+            "❗ Kindly upload a valid bank statement.\n\n"
+            "Account details or transactions were not found."
+        )
+
+        st.session_state.chat_history += [
+            ("You", "File uploaded"),
+            ("Bot", error_msg)
+        ]
+        save_to_db("You", "File uploaded")
+        save_to_db("Bot", error_msg)
+
+        # 🛑 STOP LOOP
+        st.session_state.invalid_upload_handled = True
+        st.rerun()
+
+    # ✅ VALID BANK STATEMENT
+    st.session_state.ocr_df = df
+    st.session_state.ocr_meta = {"name": name, "account": acc}
+    st.session_state.ocr_mode = True
+    st.session_state.invalid_upload_handled = False  # reset flag
+
+    bot_msg = (
+        "Your document has been successfully uploaded.\n\n"
+        f"Account Holder Name: {name}\n"
+        f"Account Number: {acc}\n\n"
+        "Choose one option:\n"
+        "1. Credit & Debit Summary\n"
+        "2. Abbreviations\n"
+        "3. Expense Analysis\n"
+    )
+
+    st.session_state.chat_history += [
+        ("You", "Bank statement uploaded"),
+        ("Bot", bot_msg)
+    ]
+    save_to_db("You", "Bank statement uploaded")
+    save_to_db("Bot", bot_msg)
+    st.rerun()
+✅ Done with Part 2
+🧩 PART 3 — Reset the flag on Reset button
+📍 Find your Reset button code
+Copy code
+Python
+if st.button("Reset"):
+    st.session_state.session_id = create_new_session()
+    st.session_state.chat_history = []
+    st.session_state.ocr_mode = False
+    st.session_state.ocr_df = None
+    st.session_state.ocr_meta = {}
+    st.rerun()
+⬇️ ADD THIS ONE LINE before st.rerun()
+Copy code
+Python
+st.session_state.invalid_upload_handled = False
+Final Reset block:
+Copy code
+Python
+if st.button("Reset"):
+    st.session_state.session_id = create_new_session()
+    st.session_state.chat_history = []
+    st.session_state.ocr_mode = False
+    st.session_state.ocr_df = None
+    st.session_state.ocr_meta = {}
+    st.session_state.invalid_upload_handled = False
+    st.rerun()
+✅ Done with Part 3
+🎉 WHAT YOU WILL SEE NOW
+✔ Upload wrong PDF → error shown once
+✔ No looping
+✔ No repeated messages
+✔ Remove file → clean
+✔ Upload valid bank statement → OCR menu
+✔ Reset → fresh start
+🧠 Why this works (simple explanation)
+Streamlit keeps uploaded files after rerun.
+We added a flag to say:
+“I already handled this invalid upload — don’t do it again.”
+That’s the correct Streamlit pattern.
+If you want, next I can:
+auto-clear file uploader
+add red error UI
+detect bank name
+improve OCR accuracy
+Just say 👍
