@@ -1,0 +1,17 @@
+st.markdown("""
+<style>
+div[data-testid="stButton"] > button {
+    background-color: #1f77b4;   /* Blue */
+    color: white;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+div[data-testid="stButton"] > button:hover {
+    background-color: #155a8a;
+    color: white;
+}
+</style>
+""", unsafe_allow_html=True)
