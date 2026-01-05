@@ -1,0 +1,57 @@
+Yes 👍 understood — ONLY that ☰ (three-line) button, not any other button.
+Below is the cleanest, safest, and tested way to give that single button a background color (blue / black / anything).
+✅ STEP 1: Wrap ONLY the ☰ button in a class
+(Do not wrap other buttons)
+Copy code
+Python
+st.markdown('<div class="history-toggle">', unsafe_allow_html=True)
+
+if st.button("☰", key="history_toggle"):
+    st.session_state.show_history = not st.session_state.show_history
+    st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+✅ STEP 2: CSS for THAT button only
+Put this once (near your other CSS):
+🔵 Blue background
+Copy code
+Python
+st.markdown("""
+<style>
+.history-toggle div[data-testid="stButton"] > button {
+    background-color: #1f77b4;   /* Blue */
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 18px;
+    width: 42px;
+    height: 42px;
+}
+
+/* Hover */
+.history-toggle div[data-testid="stButton"] > button:hover {
+    background-color: #155a8a;
+}
+</style>
+""", unsafe_allow_html=True)
+⚫ Black background (if you prefer)
+Copy code
+Css
+background-color: #000000;
+🎯 RESULT
+✔ Only ☰ button gets color
+✔ Logout / Send / Reset untouched
+✔ Works inside left panel
+✔ Toggle logic unchanged
+✔ Clean & professional UI
+🧠 Important note (why this works)
+.history-toggle scopes the CSS
+data-testid="stButton" is Streamlit’s internal button wrapper
+Safe across reruns
+If you want next:
+Rounded pill shape
+Floating button
+Tooltip like ChatGPT
+Auto-collapse on mobile
+Just tell me 💙
