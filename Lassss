@@ -1,0 +1,133 @@
+Perfect 👍
+Now that you’ve shared the exact app.py, I’ll do this safely and minimally, without breaking anything that already works.
+You asked one specific behavior:
+👉 If user uploads anything other than a bank statement, the bot should say
+“Kindly upload a valid bank statement”
+(i.e., when Account Name or Account Number is not found)
+Your backend, UI, CSS, reset, logout — ALL remain untouched ✅
+We’ll only add a small validation block.
+✅ WHERE THE PROBLEM IS RIGHT NOW
+Currently, this part always accepts the uploaded file, even if OCR fails:
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode:
+    text = extract_text(uploaded)
+    df = extract_transactions(text)
+    name, acc = extract_name_account(text)
+
+    st.session_state.ocr_df = df
+    st.session_state.ocr_meta = {"name": name, "account": acc}
+    st.session_state.ocr_mode = True
+Even when:
+name == "Not Found"
+acc == "Not Found"
+df is empty
+It still proceeds ❌
+✅ WHAT WE WILL ADD (LOGIC ONLY)
+Rule:
+If ANY of these is true:
+Account name not found
+Account number not found
+No transactions detected
+👉 Reject the upload.
+✅ EXACT CODE TO ADD (COPY–PASTE)
+🔹 STEP 1: Replace THIS BLOCK ONLY
+Find this exact code in your app.py:
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode:
+    text = extract_text(uploaded)
+    df = extract_transactions(text)
+    name, acc = extract_name_account(text)
+
+    st.session_state.ocr_df = df
+    st.session_state.ocr_meta = {"name": name, "account": acc}
+    st.session_state.ocr_mode = True
+
+    bot_msg = (
+        "Your document has been successfully uploaded.\n\n\n"
+        f"Account Holder Name: {name}\n"
+        f"Account Number: {acc}\n\n"
+        "Choose one option:\n"
+        "1. Credit & Debit Summary\n"
+        "2. Abbreviations\n"
+        "3. Expense Analysis\n"
+    )
+
+    st.session_state.chat_history += [("You", "Bank statement uploaded"), ("Bot", bot_msg)]
+    save_to_db("You", "Bank statement uploaded")
+    save_to_db("Bot", bot_msg)
+    st.rerun()
+🔹 STEP 2: REPLACE IT WITH THIS (VALIDATED VERSION)
+Copy code
+Python
+if uploaded and not st.session_state.ocr_mode:
+    text = extract_text(uploaded)
+    df = extract_transactions(text)
+    name, acc = extract_name_account(text)
+
+    # 🔴 VALIDATION: Check if it's a bank statement
+    if name == "Not Found" or acc == "Not Found" or df.empty:
+        error_msg = (
+            "❗ Kindly upload a valid bank statement.\n\n"
+            "Account details or transactions were not found."
+        )
+
+        st.session_state.chat_history += [
+            ("You", "File uploaded"),
+            ("Bot", error_msg)
+        ]
+        save_to_db("You", "File uploaded")
+        save_to_db("Bot", error_msg)
+
+        st.session_state.ocr_mode = False
+        st.rerun()
+
+    # ✅ VALID BANK STATEMENT
+    st.session_state.ocr_df = df
+    st.session_state.ocr_meta = {"name": name, "account": acc}
+    st.session_state.ocr_mode = True
+
+    bot_msg = (
+        "Your document has been successfully uploaded.\n\n"
+        f"Account Holder Name: {name}\n"
+        f"Account Number: {acc}\n\n"
+        "Choose one option:\n"
+        "1. Credit & Debit Summary\n"
+        "2. Abbreviations\n"
+        "3. Expense Analysis\n"
+    )
+
+    st.session_state.chat_history += [
+        ("You", "Bank statement uploaded"),
+        ("Bot", bot_msg)
+    ]
+    save_to_db("You", "Bank statement uploaded")
+    save_to_db("Bot", bot_msg)
+    st.rerun()
+✅ WHAT THIS FIX ACHIEVES
+Uploaded File
+Result
+Resume PDF
+❌ “Kindly upload a valid bank statement”
+Aadhaar / ID
+❌ Rejected
+Random image
+❌ Rejected
+Bank statement without name
+❌ Rejected
+Proper bank statement
+✅ OCR menu shown
+🔥 WHY THIS IS CORRECT & CLEAN
+✔ No CSS touched
+✔ No UI layout touched
+✔ Logout / Reset untouched
+✔ OCR logic reused
+✔ Chat history + DB logging preserved
+✔ Interview / mentor ready logic
+🟢 OPTIONAL (I can add later if you want)
+Detect bank name (SBI / HDFC / ICICI)
+Better transaction regex
+Highlight invalid uploads in red UI
+Allow re-upload without reset
+If you want CSS spacing fixes next, or bank-specific OCR tuning, just tell me 👍
