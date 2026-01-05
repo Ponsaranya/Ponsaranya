@@ -1,0 +1,476 @@
+import streamlit as st
+import pandas as pd
+import pickle
+import sqlite3
+import os
+import json
+from datetime import datetime
+ 
+# OCR imports
+import easyocr
+import pdfplumber
+import re
+import numpy as np
+from PIL import Image
+ 
+from utils.recommendation_engine import get_recommendation
+from utils.detect import detect_module
+from utils.llm_fallback import llm_answer
+#img
+import base64
+
+def load_image_base64(path):
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+if "logo" not in st.session_state:
+    st.session_state.logo = load_image_base64("static/logo.png")
+# AUTH
+def load_user():
+    with open("user.json", "r") as f:
+        return json.load(f)
+ 
+def authenticate(username, password):
+    user = load_user()
+    return username == user["username"] and password == user["password"]
+ 
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+ 
+if not st.session_state.logged_in:
+    st.title("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+ 
+    if st.button("Sign In"):
+        if authenticate(username, password):
+            st.session_state.logged_in = True
+            st.rerun()
+        else:
+            st.error("Invalid username or password")
+    st.stop()
+ 
+#db
+DB_PATH = "chat__hist.db"
+ 
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+ 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+ 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            sender TEXT,
+            message TEXT,
+            timestamp DATETIME
+        )
+    """)
+ 
+    conn.commit()
+    conn.close()
+ 
+def create_new_session():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO sessions DEFAULT VALUES")
+    sid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return sid
+ 
+def save_to_db(sender, message):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute(
+        "INSERT INTO chat (session_id, sender, message, timestamp) VALUES (?, ?, ?, ?)",
+        (int(st.session_state.session_id), sender, message, local_time)
+    )
+    conn.commit()
+    conn.close()
+ 
+def load_session(session_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT sender, message
+        FROM chat
+        WHERE session_id = ?
+        ORDER BY timestamp
+    """, (int(session_id),))
+    rows = cursor.fetchall()
+    conn.close()
+ 
+    st.session_state.session_id = int(session_id)
+    st.session_state.chat_history = [(r[0], r[1]) for r in rows]
+ 
+init_db()
+ 
+# load css
+if os.path.exists("style.css"):
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+ 
+#load models
+vectorizer = pickle.load(open("models/vectorizer.pkl", "rb"))
+model = pickle.load(open("models/model.pkl", "rb"))
+label_encoder = pickle.load(open("models/label_encoder.pkl", "rb"))
+df_faq = pd.read_excel("data/FAQ_dataset.xlsx")
+ 
+def chatbot_faq(user_query):
+    try:
+        qv = vectorizer.transform([user_query])
+        probs = model.predict_proba(qv)[0]
+        if max(probs) < 0.20:
+            return None
+        pred = model.predict(qv)[0]
+        intent = label_encoder.inverse_transform([pred])[0]
+        answers = df_faq[df_faq["intent"] == intent]["answer"]
+        return answers.sample(1).values[0] if not answers.empty else None
+    except:
+        return None
+ 
+# ocr setup
+reader = easyocr.Reader(['en'], gpu=False)
+ 
+def extract_text(file):
+    text = ""
+    if file.type == "application/pdf":
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                if page.extract_text():
+                    text += page.extract_text() + "\n"
+    else:
+        img = Image.open(file)
+        arr = np.array(img)
+        result = reader.readtext(arr)
+        text = " ".join([r[1] for r in result])
+    return text
+ 
+def extract_name_account(text):
+    name = re.search(r"Name\s*[:\-]?\s*([A-Za-z ]+)", text)
+    acc = re.search(
+        r"(Account\s*(No|Number)[^\d]{0,10})((\d[\s\-]?){12,20})",
+        text,
+        re.IGNORECASE
+    )
+    account_number = (
+        re.sub(r"\D", "", acc.group(3)) if acc else "Not Found"
+    )
+    return (
+        name.group(1).strip() if name else "Not Found",
+        account_number
+    )
+ 
+def extract_transactions(text):
+    rows = []
+    pattern = r'(\d{2}/\d{2}/\d{4})\s+(.*?)\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})'
+    for m in re.finditer(pattern, text):
+        rows.append({
+            "description": m.group(2),
+            "debit": float(m.group(3).replace(",", "")) if m.group(3) else 0,
+            "credit": float(m.group(4).replace(",", "")) if m.group(4) else 0
+        })
+    return pd.DataFrame(rows)
+ 
+# session state
+if "session_id" not in st.session_state:
+    st.session_state.session_id = create_new_session()
+ 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if "invalid_upload_handled" not in st.session_state:
+    st.session_state.invalid_upload_handled = False
+ 
+if "ocr_mode" not in st.session_state:
+    st.session_state.ocr_mode = False
+ 
+if "ocr_df" not in st.session_state:
+    st.session_state.ocr_df = None
+ 
+if "ocr_meta" not in st.session_state:
+    st.session_state.ocr_meta = {}
+
+if "show_history" not in st.session_state:
+    st.session_state.show_history = False
+
+# msg handler
+def submit_message():
+    msg = st.session_state.get("chat_input", "").strip()
+    is_number = msg.isdigit()
+    if not msg:
+        return
+    if st.session_state.ocr_mode and is_number and msg not in ["1", "2", "3"]:
+        reply = (
+            "Invalid option selected.\n\n"
+            "Please choose one of the following:\n"
+            "1. Credit & Debit Summary\n"
+            "2. Abbreviations\n"
+            "3. Expense Analysis"
+        )
+
+        st.session_state.chat_history += [("You", msg), ("Bot", reply)]
+        save_to_db("You", msg)
+        save_to_db("Bot", reply)
+        st.session_state.chat_input = ""
+        return
+    if st.session_state.ocr_mode and msg in ["1", "2", "3"]:
+        df = st.session_state.ocr_df
+        name = st.session_state.ocr_meta["name"]
+        acc = st.session_state.ocr_meta["account"]
+ 
+        if msg == "1":
+            debit = df["debit"].sum()
+            credit = df["credit"].sum()
+            balance = credit - debit
+ 
+            reply = (
+                f"1. Credit & Debit Summary\n\n"
+                f"Debit Summary: {debit}""\n\n"
+                f"Credit Summary: {credit}""\n\n"
+                f"Final Balance: {balance}"
+            )
+ 
+        elif msg == "2":
+            abbr = {
+                "UPI": "Unified Payments Interface",
+                "IMPS": "Immediate Payment Service",
+                "NEFT": "National Electronic Funds Transfer",
+                "ATM": "Automated Teller Machine"
+            }
+            found = []
+            for d in df["description"]:
+                for k, v in abbr.items():
+                    if k in d.upper():
+                        found.append(k)
+            if found:
+                reply="2. Abbreviations summary \n\n"
+                reply+= "\n\n".join([f"{k}:{abbr[k]}" for  k in list(found)[:4]])
+            else:
+                reply="2. Abbreviations summary \n\n No abbreviations found."
+ 
+        else:
+            food = df[df["description"].str.contains("ZOMATO|SWIGGY", case=False)]["debit"].sum()
+            shop = df[df["description"].str.contains("AMAZON|FLIPKART", case=False)]["debit"].sum()
+            service = df[df["description"].str.contains("SERVICE CHARGE", case=False)]["debit"].sum()
+            reply = (
+                f"3. Expense Analysis\n\n"
+                f"Food expenses: {food}\n\n"
+                f"Shopping expenses: {shop}\n"
+                f"Service charges: {service}\n"
+            )
+ 
+        st.session_state.chat_history += [("You", msg), ("Bot", reply)]
+        save_to_db("You", msg)
+        save_to_db("Bot", reply)
+        st.session_state.chat_input = ""
+        return
+ 
+    parts = detect_module(msg)
+    responses = []
+ 
+    if parts.get("faq"):
+        r = chatbot_faq(parts["faq"])
+        if r:
+            responses.append(r)
+ 
+    if parts.get("recommendation"):
+        r = get_recommendation(parts["recommendation"])
+        if r:
+            responses.append(r)
+ 
+    if not responses:
+        responses.append(llm_answer(msg))
+ 
+    reply = "\n\n".join(responses)
+    st.session_state.chat_history += [("You", msg), ("Bot", reply)]
+    save_to_db("You", msg)
+    save_to_db("Bot", reply)
+    st.session_state.chat_input = ""
+ 
+# ui
+col1,col2 = st.columns([9,1])
+with col1:
+    st.markdown(
+        """
+        <div style="
+            background-color:#36454F;
+            color:white;
+            padding:10px;
+            border-radius:8px;
+            display:flex;
+            align-items:center;
+            gap:355px;
+        ">
+            <img src="data:logo/png;base64,{img}" 
+                 style="height:60px; width:60px; border-radius:8px;" />
+            <div style="display:flex;flex-direction:column;justify-content:center;">
+                <h2 style="margin:0; line-height:1.2;">Banking Chatbot</h2>
+                <p style="margin:0;font-size:14px;line-height:1.2;">
+                    Ask about banking and product suggestions
+                </p>
+            </div>
+        </div>
+        """.format(img=st.session_state.logo),
+        unsafe_allow_html=True
+    )
+with col2:
+    st.markdown("""
+    <style>
+    div[data-testid="stButton"] > button {
+        background-color: #1f77b4;   /* Blue */
+        color: white;
+        border: none;
+        padding: 8px 18px;
+        border-radius: 6px;
+        font-size: 14px;
+    }
+
+    div[data-testid="stButton"] > button:hover {
+        background-color: #155a8a;
+        color: white;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+ 
+if st.session_state.show_history:
+    left, center = st.columns([1.3, 3.7])
+else:
+    left, center = st.columns([0.6, 4.8])
+with left:
+    arrow = "☰" if st.session_state.show_history else "☰"
+
+    if st.button(arrow, key="toggle-history", help="Toggle Chat History"):
+        st.session_state.show_history = not st.session_state.show_history
+        st.rerun()
+    st.markdown("""
+    <style>
+    /* Style the Streamlit button */
+    .hbutton[data-testid="stButton"] [key="toggle-history"] > button {
+        background-color: #1f77b4;
+        color: white;
+        border: none;
+        border-radius: 6px;
+    }
+
+    /* Hover */
+    .history-toggle div[data-testid="stButton"] > button:hover {
+        background-color: #155a8a;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    if st.session_state.show_history:
+        st.markdown("### Chat History")
+
+        conn = sqlite3.connect(DB_PATH)
+        sessions = pd.read_sql(
+            "SELECT session_id FROM sessions ORDER BY session_id DESC", conn
+        )
+        conn.close()
+
+        for _, r in sessions.iterrows():
+            if st.button(
+                f"Conversation {r.session_id}",
+                key=f"s_{r.session_id}"
+            ):
+                load_session(r.session_id)
+                st.rerun()
+ 
+ 
+with center:
+    # Start chat container
+    st.markdown('<div class="chat-box full-chat" style="width:100%; max-width:100%; margin:0; padding:10px;">', unsafe_allow_html=True)
+    for s, m in st.session_state.chat_history:
+        if s == "You":
+            st.markdown(f'<div class="message user">{m}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="message bot">{m}</div>', unsafe_allow_html=True)
+ 
+    st.markdown('</div>', unsafe_allow_html=True)
+ 
+    input_col,upload_col = st.columns([9,4])
+ 
+    with upload_col:
+        uploaded = st.file_uploader("", type=["pdf", "jpg", "jpeg"], label_visibility="collapsed")
+ 
+    with input_col:
+        st.text_input("", key="chat_input",placeholder="Type your message and press Enter", on_change=submit_message)
+ 
+    if uploaded and not st.session_state.ocr_mode and not st.session_state.invalid_upload_handled:
+        text = extract_text(uploaded)
+        df = extract_transactions(text)
+        name, acc = extract_name_account(text)
+
+        # VALIDATION: Check if it's a bank statement
+        if name == "Not Found" or acc == "Not Found" or df.empty:
+            error_msg = (
+                "Kindly upload a valid bank statement.\n\n"
+                "Account details or transactions were not found."
+            )
+
+            st.session_state.chat_history += [
+                ("You", "File uploaded"),
+                ("Bot", error_msg)
+            ]
+            save_to_db("You", "File uploaded")
+            save_to_db("Bot", error_msg)
+
+            st.session_state.invalid_upload_handled = True
+            st.rerun()
+
+        # VALID BANK STATEMENT
+        st.session_state.ocr_df = df
+        st.session_state.ocr_meta = {"name": name, "account": acc}
+        st.session_state.ocr_mode = True
+        st.session_state.invalid_upload_handled = False
+
+        bot_msg = (
+            "Your document has been successfully uploaded.\n\n"
+            f"Account Holder Name: {name}\n"
+            f"Account Number: {acc}\n\n"
+            "Choose one option:\n"
+            "1. Credit & Debit Summary\n"
+            "2. Abbreviations\n"
+            "3. Expense Analysis\n"
+        )
+
+        st.session_state.chat_history += [
+            ("You", "Bank statement uploaded"),
+            ("Bot", bot_msg)
+        ]
+        save_to_db("You", "Bank statement uploaded")
+        save_to_db("Bot", bot_msg)
+        st.rerun()
+    col1, col2 = st.columns([2, 1])
+ 
+    with col1:
+        if st.button("Send"):
+            submit_message()
+ 
+    with col2:
+        if st.button("Reset"):
+            st.session_state.session_id = create_new_session()
+            st.session_state.chat_history = []
+            st.session_state.ocr_mode = False
+            st.session_state.ocr_df = None
+            st.session_state.ocr_meta = {}
+            st.session_state.invalid_upload_handled = False
+            st.rerun()
+    st.markdown(
+    "<div style='color:green;font-size:12px;margin-top:6px;text-align: right;'>"
+    "If you want to reset the conversation, click this button."
+    "</div>",
+    unsafe_allow_html=True
+    )
