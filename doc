@@ -1,0 +1,40 @@
+                               CAPSTONE PROJECT
+
+PROJECT TITLE 
+AI-POWERED BANKING CHATBOT USING INTENT CLASSIFICATION AND CUSTOMER SEGMENTATION
+TEAM MEMBERS
+Shruti S & Ponsaranya R
+PROJECT OBJECTIVE
+The Objective of this project is to design and develop an intelligent banking chatbot that can handle customer queries related to frequently asked questions (FAQs) and provide personalized banking product recommendations using machine-learning models.
+PROJECT STATEMENT
+Modern banking systems often manage customer support and product recommendation as two independent services. Most platforms provide FAQ chatbots that only answer fixed queries, while recommendation systems operate separately based on customer data. This separation leads to workflow complexity, higher maintenance cost, and inconsistent user experience.
+Additionally, today’s customers expect personalized, real-time digital banking support. While many existing systems can provide general information, very few offer contextual recommendations based on individual customer profiles during the same interaction.
+Hence, there is a need for unified chatbot system that can both answer banking-related questions and provide product recommendations within a single platform.
+PROPOSED SOLUTION
+This project introduces a unified-AI-powered banking chatbot that integrates Intent Classification System where the chatbot uses a Machine Learning-based intent classifier to determine the purpose of the user query. TF-IDF vectorization transforms the user input into numerical form, and a Logistic Regression model predicts the intent. This ensures that each query is accurately routed to either the FAQ response module or the recommendation system.
+Secondly, the chatbot uses a dedicated FAQ model which responds to banking queries using a curated dataset of banking questions and answers. This enables customers to receive instant, accurate responses.
+Finally, the chatbot has a recommendation model which analyses customer attribute such as age, income level, and financial behaviour patterns. Using clustering-based segmentation techniques, customers are grouped into profiles, and suitable banking products or services are recommended based on their segment. 
+ARCHITECTURE DIAGRAM
+ 
+ARCHITECTURE DIAGRAM DESCRIPTION
+The user interacts with the system through the Streamlit UI, where banking-related questions or product enquires are submitted. These queries are processed by the streamlit backend, which forwards them to the Intent classifier built using TF-IDF and a Logistic Regression model.
+Based on the predicted Intent, the request is routed to either the FAQ Module or the Recommendation Module. The selected module produces the response, which is passed through the Response Router back to the back end and displayed to the user on the Streamlit UI. Simultaneously, each interaction (user query, detected intent and chatbot response) is stored in an SQLite Database connected to the backend for logging, monitoring and future analysis purpose.
+TECHNOLOGY STACK
+1.	Frontend
+•	Streamlit - Used to build an interactive web-based chatbot user interface.
+2.	Backend & Application Layer
+•	Python - Core programming language
+•	Pandas - Data cleaning, preparation and manipulation
+•	Pickle - For loading saved ML models and preprocessing objects
+3.	Machine Learning - FAQ Intent Classification
+•	TF-IDF Vectorizer - Converts user queries into numerical vectors suitable for ML processing.
+•	Label Encoding - Maps intent labels to numerical format for classification.
+•	Logistic Regression - Selected Classifier model for predicting user intent.
+4.	Machine Learning - Recommendation System
+•	Clustering Algorithms - Used to group similar customer profiles into segments.
+•	Customer-Product Mapping - Recommends suitable banking products corresponding to each cluster group.
+•	Rule & Profile Matching - Matches live user details with cluster characteristics to deliver personalized product suggestions.
+KEY OUTCOME
+The Developed chatbot demonstrates how machine learning can unify banking customer support and recommendation services within a single automated system, resulting in faster resolutions, personalized interactions and improved user engagement. 
+
+
