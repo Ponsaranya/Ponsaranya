@@ -1,0 +1,90 @@
+Got it 👍
+Right now your Logout button is outside the header div, that’s why:
+It appears in a separate column
+Header background doesn’t extend behind it
+✅ Correct approach (IMPORTANT)
+👉 Do NOT use a second column for logout
+👉 Put the logout button inside the same header <div> using HTML + CSS
+Streamlit buttons cannot be placed inside raw HTML, so we use a styled HTML button + query flag workaround.
+✅ STEP-BY-STEP FIX (CLEAN & WORKING)
+🔹 1. REMOVE this completely
+Copy code
+Python
+col1, col2 = st.columns([9,1])
+
+with col2:
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.rerun()
+🔹 2. USE SINGLE COLUMN HEADER WITH LOGOUT INSIDE
+Replace your header code with this 👇
+Copy code
+Python
+st.markdown(
+    """
+    <div style="
+        background-color:#36454F;
+        color:white;
+        padding:12px 20px;
+        border-radius:8px;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+    ">
+        <div style="display:flex;align-items:center;gap:15px;">
+            <img src="data:image/png;base64,{img}"
+                 style="height:55px;width:55px;border-radius:8px;" />
+
+            <div>
+                <h2 style="margin:0;line-height:1.2;">Banking Chatbot</h2>
+                <p style="margin:0;font-size:14px;opacity:0.9;">
+                    Ask about banking and product suggestions
+                </p>
+            </div>
+        </div>
+
+        <form method="get">
+            <button name="logout" value="1"
+                style="
+                    background:#ff4b4b;
+                    color:white;
+                    border:none;
+                    padding:8px 14px;
+                    border-radius:6px;
+                    cursor:pointer;
+                    font-weight:600;
+                ">
+                Logout
+            </button>
+        </form>
+    </div>
+    """.format(img=st.session_state.logo),
+    unsafe_allow_html=True
+)
+🔹 3. HANDLE LOGOUT ACTION (VERY IMPORTANT)
+Add this just below the header code:
+Copy code
+Python
+if st.query_params.get("logout"):
+    st.session_state.logged_in = False
+    st.query_params.clear()
+    st.rerun()
+✅ WHAT THIS FIX DOES
+✔ Logout button is inside header
+✔ Background color fully visible
+✔ No second column
+✔ Proper alignment (logo left, logout right)
+✔ Professional UI like real apps
+🧠 WHY THIS WORKS (KEY IDEA)
+Streamlit buttons cannot live inside HTML
+So we use:
+HTML <button>
+query_params to detect click
+This is a standard Streamlit UI trick
+📌 OPTIONAL UI IMPROVEMENTS
+If you want:
+Logout icon instead of text
+Hover effect
+Sticky header
+Full-width header
+Tell me — I’ll give you that CSS too 😄
