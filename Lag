@@ -1,0 +1,46 @@
+# HEADER
+header_container = st.container()
+with header_container:
+    st.markdown(f"""
+    <div style="
+        background-color:#36454F; 
+        color:white; 
+        padding:10px; 
+        border-radius:8px; 
+        display:flex; 
+        align-items:center;
+        justify-content: space-between;
+    ">
+        <!-- Left: Logo + Text -->
+        <div style="display:flex; align-items:center; gap:15px;">
+            <img src="data:logo/png;base64,{st.session_state.logo}" 
+                 style="height:60px; width:60px; border-radius:8px;" />
+            <div>
+                <h2 style="margin:0; line-height:1.2;">Banking Chatbot</h2>
+                <p style="margin:0;font-size:14px;line-height:1.2;">
+                    Ask about banking and product suggestions
+                </p>
+            </div>
+        </div>
+
+        <!-- Right: Logout -->
+        <div>
+            <form method="post">
+                <button name="logout" style="
+                    background-color:#FF4B4B; 
+                    border:none; 
+                    color:white; 
+                    padding:8px 15px; 
+                    border-radius:5px; 
+                    cursor:pointer;
+                    font-weight:bold;
+                ">Logout</button>
+            </form>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Detect logout click
+if "logout" in st.session_state:
+    st.session_state.logged_in = False
+    st.rerun()
