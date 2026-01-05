@@ -1,0 +1,15 @@
+# 🔴 OCR MODE – INVALID OPTION HANDLER
+if st.session_state.ocr_mode and msg not in ["1", "2", "3"]:
+    reply = (
+        "❗ Invalid option selected.\n\n"
+        "Please choose one of the following:\n"
+        "1. Credit & Debit Summary\n"
+        "2. Abbreviations\n"
+        "3. Expense Analysis"
+    )
+
+    st.session_state.chat_history += [("You", msg), ("Bot", reply)]
+    save_to_db("You", msg)
+    save_to_db("Bot", reply)
+    st.session_state.chat_input = ""
+    return
