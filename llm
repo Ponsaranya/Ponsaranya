@@ -1,0 +1,61 @@
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+import re
+import datetime
+ 
+MODEL_PATH = "models/phi-2"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH,local_files_only=True)
+model = AutoModelForCausalLM.from_pretrained(MODEL_PATH,local_files_only=True,torch_dtype=torch.float32)
+ 
+#CURRENT_YEAR = datetime.datetime.now().year
+ 
+#def is_unverifiable(question: str) -> bool:
+    #"""
+   # Returns True if the question is future-based or unverifiable.
+    #"""
+    #years = re.findall(r'\b(20\d{2})\b', question)
+    #for y in years:
+        #if int(y) > CURRENT_YEAR:
+           # return True
+    #future_words = ["will", "next year",
+    #"going to", "future", "predict", "forecast", "estimate","expected"]
+    #return any(word in question.lower() for word in future_words)
+ 
+def llm_answer(question: str) -> str:
+   # if is_unverifiable(question):
+        #return "The information is not available."
+    """"
+    General-purpose LLM Fallback.
+    Used when FAQ and recommender do not match.
+    """
+    question_clean = question.strip()
+    question_lower = question_clean.lower()
+ 
+    is_how_to = question.lower().strip().startswith(("how to","how","steps","guide","procedure","process"))
+    prompt = (
+    "You are a helpful, factual AI assistant.\n\n"
+    "Rules:\n"
+    #"- Answer ONLY if the answer if the information is well-known and factual.\n"
+    "- If you are not sure,,say exactly:\"This information is not available.\"\n"
+    "- Do NOT guess,assume, predict or fabricate information.\n"
+    "- If the question asks for steps or guidance, give clear step-by-step instructions.\n"
+    "- Otherwise, give a clear factual answer in 1-3 lines.\n"
+    #f"{'- Provide clear step-by-step instructions.' if is_how_to else '- Keep the answer concise.'}\n\n"
+    f"Question:\n{question_clean}\n\n"
+    "Answer:"
+    )
+ 
+    inputs = tokenizer(prompt, return_tensors="pt",truncation=True)
+    #prompt_len = inputs["input_ids"].shape[1]
+    with torch.no_grad():
+        output = model.generate(**inputs, max_new_tokens=100, do_sample=False,repetition_penalty=1.2,temperature=0.0,top_p=0.1, pad_token_id=tokenizer.eos_token_id)
+    #generated_tokens = output[0][prompt_len:]
+    decoded = tokenizer.decode(output[0], skip_special_tokens=True).strip()
+    if "Answer:" in decoded:
+        return decoded.split("Answer:",1)[-1].strip()
+    #uncertain_phrases = ["i think", "likely","might","could be","expected to","probably","possibly","i am not sure","i'm not sure"]
+    #if any(phrase in decoded.lower() for phrase in uncertain_phrases):
+        #return "The information is not available."
+    if not decoded:
+        return "The information is not available."
+    return decoded
