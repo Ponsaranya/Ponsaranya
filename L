@@ -1,0 +1,93 @@
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+
+# =========================
+# Model Loading
+# =========================
+MODEL_PATH = "models/phi-2"
+
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_PATH,
+    local_files_only=True
+)
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_PATH,
+    local_files_only=True,
+    torch_dtype=torch.float32
+)
+
+# =========================
+# Banking Keyword Control
+# =========================
+BANKING_KEYWORDS = [
+    "bank", "account", "balance", "statement", "transaction",
+    "debit", "credit", "loan", "emi", "interest",
+    "deposit", "withdraw", "transfer",
+    "ifsc", "branch", "upi", "net banking",
+    "cheque", "atm", "passbook", "service charge",
+    "minimum balance", "charges", "fees"
+]
+
+def is_banking_query(question: str) -> bool:
+    question = question.lower()
+    return any(keyword in question for keyword in BANKING_KEYWORDS)
+
+# =========================
+# Banking LLM Answer
+# =========================
+def llm_answer(question: str) -> str:
+    """
+    Banking-restricted LLM.
+    Answers ONLY banking-related queries.
+    """
+
+    question_clean = question.strip()
+
+    # 🚫 Reject non-banking queries
+    if not is_banking_query(question_clean):
+        return (
+            "I can assist only with banking-related queries such as "
+            "accounts, transactions, statements, loans, or charges."
+        )
+
+    prompt = (
+        "You are a banking assistant.\n\n"
+        "Rules:\n"
+        "- Answer ONLY banking-related questions.\n"
+        "- Do NOT answer non-banking or general questions.\n"
+        "- If the information is unavailable, say exactly:\n"
+        "\"This information is not available.\"\n"
+        "- Do NOT guess, assume, predict, or fabricate.\n"
+        "- Keep answers short and factual.\n\n"
+        f"Customer Question:\n{question_clean}\n\n"
+        "Answer:"
+    )
+
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True
+    )
+
+    with torch.no_grad():
+        output = model.generate(
+            **inputs,
+            max_new_tokens=80,
+            do_sample=False,
+            temperature=0.0,
+            repetition_penalty=1.2,
+            top_p=0.1,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+    decoded = tokenizer.decode(
+        output[0],
+        skip_special_tokens=True
+    ).strip()
+
+    if "Answer:" in decoded:
+        answer = decoded.split("Answer:", 1)[-1].strip()
+        return answer if answer else "This information is not available."
+
+    return "This information is not available."
