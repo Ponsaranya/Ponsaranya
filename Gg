@@ -1,0 +1,29 @@
+import time
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
+
+model_name = "mistralai/Mistral-7B-Instruct-v0.1"
+
+# Load model
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
+
+prompt = "Explain AI in one line."
+
+start = time.time()
+
+inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+outputs = model.generate(**inputs, max_new_tokens=50)
+response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+end = time.time()
+
+print("=== RESPONSE ===")
+print(response)
+
+print("\n=== TIME TAKEN ===")
+print(f"{end-start:.3f} seconds")
