@@ -1,0 +1,38 @@
+import subprocess
+import time
+
+MODEL_NAME = "qwen2.5"
+PROMPT = "Explain RAG architecture in simple words."
+
+print("\nRunning Qwen 2.5 benchmark...\n")
+
+start_time = time.time()
+
+# Execute Ollama directly (no HTTP/localhost)
+result = subprocess.run(
+    ["ollama", "run", MODEL_NAME, PROMPT],
+    capture_output=True,
+    text=True
+)
+
+end_time = time.time()
+
+response_text = result.stdout.strip()
+elapsed = end_time - start_time
+
+# Approximate token count (CLI does not expose exact tokens)
+token_estimate = len(response_text.split())
+tokens_per_sec = token_estimate / elapsed if elapsed > 0 else 0
+
+print("PROMPT:")
+print(PROMPT)
+
+print("\nRESPONSE:")
+print(response_text)
+
+print("\nMETRICS:")
+print(f"Time Taken      : {elapsed:.2f} sec")
+print(f"Token Estimate  : {token_estimate}")
+print(f"Tokens per sec  : {tokens_per_sec:.2f}")
+
+print("\nDone")
