@@ -1,0 +1,156 @@
+import os
+import torch
+from pypdf import PdfReader
+from pdf2image import convert_from_path
+from PIL import Image
+from transformers import (
+    Qwen2VLForConditionalGeneration,
+    AutoProcessor,
+    AutoTokenizer,
+    AutoModelForCausalLM
+)
+
+# =====================================================
+# CONFIG
+# =====================================================
+PDF_PATH = "brd.pdf"
+
+VL_MODEL_NAME = "Qwen/Qwen2-VL-7B-Instruct"
+TEXT_MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# =====================================================
+# STEP 1 — Extract text if available
+# =====================================================
+def extract_text_from_pdf(pdf_path):
+    reader = PdfReader(pdf_path)
+    text = ""
+
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+
+    return text.strip()
+
+# =====================================================
+# STEP 2 — Convert PDF to images
+# =====================================================
+def convert_pdf_to_images(pdf_path):
+    images = convert_from_path(pdf_path)
+    image_paths = []
+
+    for i, img in enumerate(images):
+        path = f"page_{i+1}.png"
+        img.save(path)
+        image_paths.append(path)
+
+    return image_paths
+
+# =====================================================
+# STEP 3 — Load Models (once)
+# =====================================================
+print("🔄 Loading Qwen VL...")
+vl_model = Qwen2VLForConditionalGeneration.from_pretrained(
+    VL_MODEL_NAME,
+    torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+    device_map="auto"
+)
+vl_processor = AutoProcessor.from_pretrained(VL_MODEL_NAME)
+
+print("🔄 Loading Qwen Text...")
+tokenizer = AutoTokenizer.from_pretrained(TEXT_MODEL_NAME)
+text_model = AutoModelForCausalLM.from_pretrained(
+    TEXT_MODEL_NAME,
+    device_map="auto"
+)
+
+# =====================================================
+# STEP 4 — Process PDF
+# =====================================================
+print("📄 Reading PDF...")
+
+text_content = extract_text_from_pdf(PDF_PATH)
+
+image_paths = convert_pdf_to_images(PDF_PATH)
+
+vl_extracted_text = ""
+
+# -------- Analyze each page visually --------
+for img_path in image_paths:
+    print(f"👁️ Analyzing {img_path}")
+
+    image = Image.open(img_path)
+
+    vl_prompt = """
+You are a senior business analyst.
+
+Analyze this BRD page and extract:
+
+1. Section name (if visible)
+2. Key components or diagrams
+3. Important requirements
+4. Any data flow or architecture described
+5. Tables summary if present
+
+Return clear structured text.
+"""
+
+    inputs = vl_processor(
+        text=vl_prompt,
+        images=image,
+        return_tensors="pt"
+    ).to(vl_model.device)
+
+    output = vl_model.generate(**inputs, max_new_tokens=500)
+
+    page_result = vl_processor.decode(output[0], skip_special_tokens=True)
+
+    vl_extracted_text += "\n\n" + page_result
+
+# =====================================================
+# STEP 5 — Combine ALL knowledge
+# =====================================================
+final_knowledge = f"""
+TEXT FROM BRD:
+{text_content}
+
+VISION ANALYSIS:
+{vl_extracted_text}
+"""
+
+# Save for future RAG
+with open("brd_knowledge.txt", "w", encoding="utf-8") as f:
+    f.write(final_knowledge)
+
+print("✅ Knowledge base created")
+
+# =====================================================
+# STEP 6 — Generate Explanation
+# =====================================================
+analysis_prompt = f"""
+You are an expert solution architect.
+
+Based on this BRD knowledge:
+
+{final_knowledge}
+
+Explain clearly:
+
+1. What system is being built
+2. Main modules
+3. Data flow
+4. Architecture summary
+5. Key business scope
+
+Write in clean structured format.
+"""
+
+inputs = tokenizer(analysis_prompt, return_tensors="pt").to(text_model.device)
+outputs = text_model.generate(**inputs, max_new_tokens=700)
+
+final_explanation = tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+print("\n================ FINAL BRD UNDERSTANDING ================\n")
+print(final_explanation)
