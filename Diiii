@@ -1,0 +1,545 @@
+Got it — you want only the LEFT section instructions from the diagram (Upstream + On-prem sources) so you can recreate it (e.g., in PlantUML / MD / Copilot agent).
+Here’s a clean, structured breakdown you can directly use 👇
+✅ LEFT SECTION – FULL INSTRUCTIONS
+1. Main Container
+Create a top-level container:
+Title:
+Copy code
+
+Upstream source systems to SAP BTP
+Layout:
+Vertical layout
+Two major blocks inside:
+SAP S/4HANA Cloud (top)
+SCB On-premise data sources (bottom)
+2. Block 1: SAP S/4HANA Cloud
+Container
+Copy code
+
+SAP S4 HANA Cloud, Private Edition (RISE)
+Inside Components (Vertical stack)
+Create 6 rectangular boxes:
+Copy code
+
+S4GL
+BPC / BW
+MDG
+FPSL HA
+PAPM
+FSDP
+Right Side Component
+Add a vertical block:
+Copy code
+
+CC
+Top-right small box:
+Copy code
+
+RMI Agent Scheduler
+Connections:
+Each of the 6 modules → connect to CC
+From CC → right side (external) using:
+Copy code
+
+ODBC connections (multiple parallel lines)
+3. Block 2: SCB On-Premise Data Sources
+Container Title:
+Copy code
+
+SCB On-premise data sources
+Inside Components (Vertical stack)
+Copy code
+
+File Server (PMI-ODS)
+Oracle (PMI-ODS)
+Oracle (BCRS)
+Hadoop (Tax Data Mart)
+Hadoop (Athena)
+Hadoop (STARS)
+Right Side Component:
+Add a vertical block:
+Copy code
+
+DP Agent
+Bottom small component:
+Copy code
+
+*HANA JDBC Driver
+4. Connections (VERY IMPORTANT)
+From Sources → DP Agent
+All sources connect to:
+Copy code
+
+DP Agent
+From DP Agent → External (Right side)
+Use different connection types:
+Source Type
+Connection
+File Server
+File Adapter
+Oracle
+JDBC
+Hadoop
+JDBC
+STARS
+JDBC
+5. Extra Left Section Blocks (Bottom)
+FDP / GDP Block
+Copy code
+
+FDP / GDP
+Connections:
+→ DP Agent
+→ CC
+SAC Planning Block
+Copy code
+
+SAC Planning
+Inside it:
+Copy code
+
+SAP Datasphere Embedded HANA
+Connection:
+Copy code
+
+→ JDBC to external
+6. Vertical Boundary Line
+Add a vertical separator line labeled:
+Copy code
+
+Zscaler
+This separates:
+Left (Source Systems)
+Right (Integration Layer)
+7. Notes Section (Bottom)
+Add text block:
+Copy code
+
+NOTE:
+Two Open items to help optimize analytical workload at RISE:
+1) DR Instance
+2) Creation of Curated Datasets within RISE
+8. Styling Instructions (Important for “exact look”)
+SAP block → light beige/yellow background
+On-prem block → light blue background
+FDP/GDP → light green
+SAC → light pink
+DP Agent / CC → vertical grey boxes
+Connections:
+Straight horizontal lines
+Labels: ODBC / JDBC / File Adapter
+Keep alignment:
+Left → sources
+Middle → agents (CC / DP Agent)
+Right → outgoing connections
+9. Structural Layout Summary (for Copilot / MD)
+Copy code
+
+[Upstream Systems]
+   ├── [SAP S4 HANA Cloud]
+   │       ├── Modules (6)
+   │       └── CC → ODBC →
+   │
+   ├── [SCB On-Prem]
+   │       ├── Sources (6)
+   │       └── DP Agent → JDBC/File →
+   │
+   ├── [FDP/GDP] → DP Agent / CC
+   └── [SAC Planning] → JDBC
+💡 If you're converting to PlantUML
+Tell Copilot:
+"Create grouped containers with vertical alignment, internal components stacked, central agent (CC/DP Agent), and labeled connections (ODBC/JDBC/File Adapter). Maintain enterprise architecture style with color-coded zones."
+If you want next step, I can: ✅ Convert this exact left part into PlantUML code
+✅ Or give you a Copilot agent MD template to auto-generate diagrams
+Just tell 👍
+Perfect 👍 — now I’ll give you FULL structured instructions for these remaining sections (Middle + Right + Consumption), just like I did for the left side.
+You can directly use this for PlantUML / Copilot MD / Diagram automation.
+✅ 1. TOP HEADERS (GLOBAL STRUCTURE)
+Create 3 horizontal section headers:
+Copy code
+
+Remote Connection
+Data Pre-Processing
+Data Storage (SAP BTP)
+These act as zone labels above containers.
+✅ 2. INTEGRATION LAYER (VIEW LAYER)
+Container
+Copy code
+
+Integration Layer (View Layer)
+(SAP HANA Cloud – Remote Connections)
+Structure
+Tall vertical container
+Positioned LEFT of preprocessing
+Connections
+Incoming:
+ODBC (multiple)
+JDBC
+File Adapter
+Outgoing:
+ODBC → Pre-processing Layer
+✅ 3. PRE-PROCESSING LAYER
+Main Container
+Copy code
+
+Pre-processing Layer
+(HC SP, DSP)
+Internal Blocks (2 sections)
+1. Common Dataset Processing
+Copy code
+
+Common datasets processing
+2. Use-case Specific Processing
+Copy code
+
+Use-case specific datasets processing
+External Connection (Top)
+Add small box above:
+Copy code
+
+SAP Automation Pilot
+Connection:
+Copy code
+
+HTTP → Pre-processing
+ODBC → Pre-processing
+Bottom Subsystem (IMPORTANT)
+Container:
+Copy code
+
+Cloud Foundry RT
+Inside:
+Copy code
+
+NodeJS
+   ├── File Upload App
+   └── ZoneBridge App
+Below it:
+Copy code
+
+Application Logging Service
+Connections
+From
+To
+Type
+Integration Layer
+Pre-processing
+ODBC
+Pre-processing
+Data Storage
+ODBC
+Cloud Foundry
+Data Storage
+ODBC
+Cloud Foundry
+Pre-processing
+ODBC
+✅ 4. DATA STORAGE (CURATED DATASETS)
+Main Container
+Copy code
+
+Curated datasets
+(HC Storage)
+Section 1: Common Schema
+Container
+Copy code
+
+Common Schema (Reusable datasets)
+Inside Boxes:
+Copy code
+
+Hogan
+EFBS
+HFSPD
+Treasury
+iSpace
+SalesDB
+Athena (KPIs)
+Section 2: Use-Case Specific Datasets
+Container
+Copy code
+
+Use-Case Specific Datasets
+Inside:
+Copy code
+
+GL-Analytics
+PC MI
+FinSight Performance
+Client MI
+Capital BI
+Treasury
+Tax
+Section 3: Bottom Storage
+Copy code
+
+Mapping Data / Overlay Data
+KPI Cards Results Caching
+Connections
+From
+To
+Common Schema ↔ Use-case datasets
+
+Use-case datasets ↓ Mapping Data
+
+Pre-processing → Both sections (ODBC)
+
+✅ 5. CONSUMPTION LAYER (RIGHT SIDE)
+Main Container
+Copy code
+
+Consumption Layer – Out of Scope
+(SAP BTP)
+Inside Components
+1. SAP Datasphere
+Copy code
+
+SAP Datasphere (Analytical Model)
+2. SAP Analytics Cloud
+Copy code
+
+SAP Analytics Cloud (SAC BI)
+3. End Users
+👥 icon or label:
+Copy code
+
+End Users
+Connections
+From
+To
+Type
+Data Storage
+SAP Datasphere
+ODBC
+SAP Datasphere
+SAP Analytics Cloud
+HTTP
+SAP Analytics Cloud
+End Users
+HTTP
+✅ 6. CHANGE LOG TABLE
+Table Structure
+Columns:
+Copy code
+
+ARF Date | Version No | Change Description
+Sample Rows (as seen):
+Copy code
+
+10 Mar 2025 | v30 | Initial creation with datasets
+24 Mar 2025 | v33 | Added Tax dataset
+5 May 2025 | v42 | Added HANA JDBC Driver
+16 Jun 2025 | v181 | Added iSpace & SalesDB
+25 Aug 2025 | v202 | ZoneBridge App + KPI caching
+22 Sep 2025 | v220 | File Upload + integrations
+6 Nov 2025 | v229 | Athena KPIs integration
+12 Dec 2025 | v242 | SAC Planning integration
+16 Jan 2026 | v252 | Consolidated reporting view
+✅ 7. BOTTOM NOTES
+Add text block:
+Copy code
+
+Acronyms:
+HC = HANA Cloud
+SP = Stored Procedure
+DSP = Datasphere
+Additional Notes:
+Copy code
+
+SAP Automation Pilot is required to trigger stored procedures in HANA Cloud.
+
+Application Logging Service is used to monitor data extraction processes.
+✅ 8. CONNECTION TYPES SUMMARY
+Use consistent labels:
+ODBC → main data flow
+JDBC → database connections
+HTTP → service/API communication
+File Adapter → file ingestion
+✅ 9. FINAL STRUCTURE (FOR MD / COPILOT)
+Copy code
+
+[Integration Layer]
+        ↓ ODBC
+[Pre-processing Layer]
+   ├── Common Processing
+   ├── Use-case Processing
+   └── Cloud Foundry Apps
+        ↓
+[Curated Datasets]
+   ├── Common Schema
+   ├── Use-case Datasets
+   └── Mapping / KPI Cache
+        ↓
+[Consumption Layer]
+   ├── Datasphere
+   ├── SAC
+   └── End Users
+💡 If you want next step
+I can now: ✅ Convert THIS ENTIRE DIAGRAM into exact PlantUML code
+✅ Or create Copilot Agent MD template (auto-generate diagrams like magic 🔥)
+✅ Or fix alignment/colors exactly like image
+Just tell: 👉 “Give PlantUML” or “Give MD agent”
+
+
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+'==================== LEFT SIDE ====================
+
+package "Upstream Source Systems to SAP BTP" {
+
+  package "SAP S/4 HANA Cloud (RISE)" {
+    [S4GL]
+    [BPC / BW]
+    [MDG]
+    [FPSL HA]
+    [PAPM]
+    [FSDP]
+
+    [CC]
+
+    S4GL --> CC
+    "BPC / BW" --> CC
+    MDG --> CC
+    "FPSL HA" --> CC
+    PAPM --> CC
+    FSDP --> CC
+  }
+
+  package "SCB On-Premise Data Sources" {
+    [File Server (PMI-ODS)]
+    [Oracle (PMI-ODS)]
+    [Oracle (BCRS)]
+    [Hadoop (Tax Data Mart)]
+    [Hadoop (Athena)]
+    [Hadoop (STARS)]
+
+    [DP Agent]
+    [HANA JDBC Driver]
+
+    "File Server (PMI-ODS)" --> "DP Agent"
+    "Oracle (PMI-ODS)" --> "DP Agent"
+    "Oracle (BCRS)" --> "DP Agent"
+    "Hadoop (Tax Data Mart)" --> "DP Agent"
+    "Hadoop (Athena)" --> "DP Agent"
+    "Hadoop (STARS)" --> "DP Agent"
+  }
+
+  [FDP / GDP]
+  [SAC Planning]
+
+  "FDP / GDP" --> "DP Agent"
+  "FDP / GDP" --> CC
+}
+
+'==================== INTEGRATION ====================
+
+package "Integration Layer (View Layer)\nSAP HANA Cloud - Remote Connections" {
+  [Integration Layer]
+}
+
+CC --> [Integration Layer] : ODBC
+"DP Agent" --> [Integration Layer] : JDBC / File Adapter
+
+'==================== PRE PROCESSING ====================
+
+package "Pre-processing Layer (HC SP, DSP)" {
+
+  [Common Datasets Processing]
+  [Use-case Specific Processing]
+
+  package "Cloud Foundry RT" {
+    [NodeJS]
+    [File Upload App]
+    [ZoneBridge App]
+
+    NodeJS --> "File Upload App"
+    NodeJS --> "ZoneBridge App"
+  }
+
+  [Application Logging Service]
+}
+
+[Integration Layer] --> [Common Datasets Processing] : ODBC
+[Integration Layer] --> [Use-case Specific Processing] : ODBC
+
+[Common Datasets Processing] --> [Use-case Specific Processing]
+
+[File Upload App] --> [Use-case Specific Processing]
+[ZoneBridge App] --> [Use-case Specific Processing]
+
+'==================== DATA STORAGE ====================
+
+package "Curated Datasets (HC Storage)" {
+
+  package "Common Schema (Reusable datasets)" {
+    [Hogan]
+    [EFBS]
+    [HFSPD]
+    [Treasury]
+    [iSpace]
+    [SalesDB]
+    [Athena KPIs]
+  }
+
+  package "Use-case Specific Datasets" {
+    [GL Analytics]
+    [PC MI]
+    [FinSight Performance]
+    [Client MI]
+    [Capital BI]
+    [Treasury UC]
+    [Tax]
+  }
+
+  [Mapping Data / Overlay Data]
+  [KPI Cards Results Caching]
+}
+
+[Use-case Specific Processing] --> [GL Analytics] : ODBC
+[Use-case Specific Processing] --> [PC MI]
+[Use-case Specific Processing] --> [FinSight Performance]
+[Use-case Specific Processing] --> [Client MI]
+[Use-case Specific Processing] --> [Capital BI]
+[Use-case Specific Processing] --> [Treasury UC]
+[Use-case Specific Processing] --> [Tax]
+
+[Common Datasets Processing] --> [Hogan]
+[Common Datasets Processing] --> [EFBS]
+[Common Datasets Processing] --> [HFSPD]
+[Common Datasets Processing] --> [Treasury]
+[Common Datasets Processing] --> [iSpace]
+[Common Datasets Processing] --> [SalesDB]
+[Common Datasets Processing] --> [Athena KPIs]
+
+[GL Analytics] --> [Mapping Data / Overlay Data]
+[PC MI] --> [Mapping Data / Overlay Data]
+
+[Mapping Data / Overlay Data] --> [KPI Cards Results Caching]
+
+'==================== CONSUMPTION ====================
+
+package "Consumption Layer (Out of Scope) - SAP BTP" {
+
+  [SAP Datasphere]
+  [SAP Analytics Cloud]
+  [End Users]
+
+  [SAP Datasphere] --> [SAP Analytics Cloud] : HTTP
+  [SAP Analytics Cloud] --> [End Users] : HTTP
+}
+
+[GL Analytics] --> [SAP Datasphere] : ODBC
+[PC MI] --> [SAP Datasphere]
+[FinSight Performance] --> [SAP Datasphere]
+
+'==================== AUTOMATION ====================
+
+[SAP Automation Pilot]
+
+[SAP Automation Pilot] --> [Common Datasets Processing] : HTTP
+[SAP Automation Pilot] --> [Use-case Specific Processing]
+
+@enduml
