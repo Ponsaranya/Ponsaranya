@@ -1,0 +1,162 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+'==================== LEFT MAIN ====================
+
+package "Upstream source systems to SAP BTP" {
+
+  '================ SAP S4 =================
+  package "SAP S/4 HANA Cloud\nPrivate Edition (RISE)" {
+
+    rectangle "RMI Agent\nScheduler" as RMQ
+
+    rectangle "S4GL" 
+    rectangle "BPC / BW"
+    rectangle "MDG"
+    rectangle "FPSL HA"
+    rectangle "PAPM"
+    rectangle "FSDP"
+
+    rectangle "CC" as CC #LightGray
+
+    S4GL - CC
+    "BPC / BW" - CC
+    MDG - CC
+    "FPSL HA" - CC
+    PAPM - CC
+    FSDP - CC
+  }
+
+  note bottom of CC
+    Two Open items to help optimize
+    analytical workload at RISE:
+    1) DR Instance
+    2) Creation of Curated Datasets within RISE
+  end note
+
+  '================ ON PREM =================
+  package "SCB On-premise data sources" {
+
+    rectangle "File Server (PMI-ODS)"
+    rectangle "Oracle (PMI-ODS)"
+    rectangle "Oracle (BCRS)"
+    rectangle "Hadoop (Tax Data Mart)"
+    rectangle "Hadoop (Athena)" #FFCCCC
+    rectangle "Hadoop (STARS)"
+
+    rectangle "DP Agent" as DP #LightGray
+
+    "File Server (PMI-ODS)" --> DP
+    "Oracle (PMI-ODS)" --> DP
+    "Oracle (BCRS)" --> DP
+    "Hadoop (Tax Data Mart)" --> DP
+    "Hadoop (Athena)" --> DP
+    "Hadoop (STARS)" --> DP
+  }
+
+  '================ FDP / GDP =================
+  package "FDP / GDP" {
+    rectangle "DP Agent"
+    rectangle "CC"
+  }
+
+  '================ SAC =================
+  package "SAC Planning" {
+    rectangle "SAP Datasphere\nEmbedded HANA"
+  }
+}
+
+'================ ZSCALER (VERTICAL LINE) =================
+rectangle "Zscaler" as ZS #White
+ZS -[hidden]-> ZS
+
+'================ RIGHT SIDE ====================
+
+package "SAP BTP" {
+
+  package "Remote Connection" {
+    rectangle "Integration Layer (View Layer)\nSAP HANA Cloud\nRemote Connections" as INT
+  }
+
+  package "Data Pre-Processing" {
+
+    rectangle "SAP Automation Pilot" as SAPAUTO
+
+    package "Pre-processing Layer (HC SP, DSP)" {
+
+      rectangle "Common Datasets Processing" as CDP
+      rectangle "Use-case Specific Datasets Processing" as UDP
+
+      package "Cloud Foundry RT" {
+        rectangle "NodeJS"
+        rectangle "File Upload App"
+        rectangle "ZoneBridge App"
+      }
+    }
+  }
+
+  package "Data Storage" {
+
+    package "Curated datasets (HC Storage)" {
+
+      package "Common Schema" {
+        rectangle "Hogan"
+        rectangle "EFBS"
+        rectangle "HFSPD"
+        rectangle "Treasury"
+        rectangle "iSpace"
+        rectangle "SalesDB"
+        rectangle "Athena KPIs"
+      }
+
+      package "Use-case Specific Datasets" {
+        rectangle "GL Analytics"
+        rectangle "PC MI"
+        rectangle "FinSight Performance"
+        rectangle "Client MI"
+        rectangle "Capital BI"
+        rectangle "Treasury"
+        rectangle "Tax"
+      }
+
+      rectangle "Mapping Data / Overlay Data"
+      rectangle "KPI Cards Results Caching"
+    }
+  }
+}
+
+'================ CONNECTIONS ====================
+
+' LEFT → INTEGRATION
+CC --> INT : ODBC
+DP --> INT : JDBC / File
+
+' INTEGRATION → PREPROCESSING
+INT --> CDP : ODBC
+INT --> UDP : ODBC
+
+' AUTOMATION
+SAPAUTO --> CDP : HTTP
+SAPAUTO --> UDP
+
+' RMQ connections
+RMQ --> SAPAUTO
+RMQ --> CDP
+
+' PREPROCESSING → STORAGE
+CDP --> Hogan
+CDP --> EFBS
+CDP --> HFSPD
+
+UDP --> "GL Analytics"
+UDP --> "PC MI"
+UDP --> "FinSight Performance"
+
+' STORAGE FLOW
+"GL Analytics" --> "Mapping Data / Overlay Data"
+"Mapping Data / Overlay Data" --> "KPI Cards Results Caching"
+
+@enduml
