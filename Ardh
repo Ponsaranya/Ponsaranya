@@ -1,0 +1,162 @@
+@startuml
+left to right direction
+skinparam backgroundColor #F7F7F7
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+'================ TITLE =================
+title <b>EFDNA - Unified Data Sourcing Strategy - Logical Architecture:</b>\n<i>Follows approved patterns - #2 (Reporting store); #3 (Hybrid)</i>
+
+'================ COLORS =================
+!define HEADER_COLOR #D97B6A
+!define BOX_COLOR #FFFFFF
+!define BORDER_COLOR #333333
+
+skinparam package {
+  BackgroundColor BOX_COLOR
+  BorderColor BORDER_COLOR
+}
+
+skinparam rectangle {
+  BackgroundColor BOX_COLOR
+  BorderColor BORDER_COLOR
+}
+
+'================ LEFT SECTION =================
+package "Upstream source systems to SAP BTP" {
+
+  package "SAP S4 HANA Cloud, Private Edition (RISE)" {
+    rectangle "S4GL"
+    rectangle "BPC / BW"
+    rectangle "MDG"
+    rectangle "FPSL HA"
+    rectangle "PAPM"
+    rectangle "FSDP"
+  }
+
+  package "SCB On-premise data sources" {
+    rectangle "File Server (PMI-ODS)"
+    rectangle "Oracle (PMI-ODS)"
+    rectangle "Oracle (BCRS)"
+    rectangle "Hadoop (Tax Data Mart)"
+    rectangle "Hadoop (Athena)"
+    rectangle "Hadoop (STARS)"
+  }
+
+  rectangle "FDP / GDP" #E8F5E9
+  rectangle "SAC Planning" #FCE4EC
+}
+
+'================ INTEGRATION =================
+package "Integration Layer (View Layer)\n(SAP HANA Cloud - Remote Connections)" {
+  rectangle "Integration Layer"
+}
+
+'================ PRE-PROCESS =================
+package "Data Pre-Processing" {
+
+  rectangle "SAP Automation Pilot" #FFF3E0
+
+  package "Pre-processing Layer\n(HC SP, DSP)" {
+    rectangle "Common Dataset processing"
+    rectangle "Use-case Specific Dataset processing"
+  }
+
+  package "Cloud Foundry RT" {
+    rectangle "NodeJS\n(File Upload App\nZoneBridge App)"
+  }
+
+  rectangle "Application Logging Service" #EEEEEE
+}
+
+'================ STORAGE =================
+package "Data Storage (SAP BTP)" {
+
+  package "Curated datasets (HC Storage)" {
+    rectangle "Common Schema\n(Reusable datasets)\nHogan\nEFBS\nHFSPD\niPace\nSalesDB"
+  }
+
+  package "Use-Case Specific Datasets" {
+    rectangle "GL Analytics"
+    rectangle "PC MI"
+    rectangle "FinSight Performance"
+    rectangle "Client MI"
+    rectangle "Capital BI"
+    rectangle "Treasury"
+    rectangle "Tax"
+  }
+
+  rectangle "Mapping Data Overlay Data"
+  rectangle "KPI Cards Result Caching"
+}
+
+'================ CONSUMPTION =================
+package "Consumption Layer - Out of Scope (SAP BTP)" {
+
+  rectangle "SAP Datasphere\n(Analytical Model)" #E3F2FD
+  rectangle "SAP Analytics Cloud\n(SAC BI)" #E3F2FD
+  rectangle "End Users"
+}
+
+'================ CONNECTIONS =================
+
+' Upstream → Integration
+"S4GL" --> "Integration Layer" : ODBC
+"BPC / BW" --> "Integration Layer"
+"MDG" --> "Integration Layer"
+"FPSL HA" --> "Integration Layer"
+"PAPM" --> "Integration Layer"
+"FSDP" --> "Integration Layer"
+
+"File Server (PMI-ODS)" --> "Integration Layer" : JDBC
+"Oracle (PMI-ODS)" --> "Integration Layer"
+"Oracle (BCRS)" --> "Integration Layer"
+"Hadoop (Tax Data Mart)" --> "Integration Layer"
+"Hadoop (Athena)" --> "Integration Layer"
+"Hadoop (STARS)" --> "Integration Layer"
+
+"FDP / GDP" --> "Integration Layer"
+"SAC Planning" --> "Integration Layer"
+
+' Integration → Pre-processing
+"Integration Layer" --> "Common Dataset processing" : ODBC
+"Integration Layer" --> "Use-case Specific Dataset processing"
+
+'SAP Automation
+"SAP Automation Pilot" --> "Common Dataset processing"
+
+' Cloud Foundry
+"NodeJS\n(File Upload App\nZoneBridge App)" --> "Mapping Data Overlay Data"
+"NodeJS\n(File Upload App\nZoneBridge App)" --> "KPI Cards Result Caching"
+
+' Pre-processing → Storage
+"Common Dataset processing" --> "Common Schema\n(Reusable datasets)\nHogan\nEFBS\nHFSPD\niPace\nSalesDB"
+"Use-case Specific Dataset processing" --> "GL Analytics"
+"Use-case Specific Dataset processing" --> "PC MI"
+"Use-case Specific Dataset processing" --> "FinSight Performance"
+"Use-case Specific Dataset processing" --> "Client MI"
+"Use-case Specific Dataset processing" --> "Capital BI"
+"Use-case Specific Dataset processing" --> "Treasury"
+"Use-case Specific Dataset processing" --> "Tax"
+
+' Storage → Consumption
+"GL Analytics" --> "SAP Datasphere\n(Analytical Model)" : ODBC
+"PC MI" --> "SAP Datasphere\n(Analytical Model)"
+"SAP Datasphere\n(Analytical Model)" --> "SAP Analytics Cloud\n(SAC BI)" : HTTPS
+"SAP Analytics Cloud\n(SAC BI)" --> "End Users"
+
+'================ NOTES =================
+note bottom
+Acronyms:
+HC = HANA Cloud
+SP = Stored Procedure
+DSP = Datasphere
+
+SAP Automation Pilot is used to trigger stored procedures.
+
+Application Logging Service logs and monitors data extraction.
+
+Mapping/Overlay data schema is temporary storage for uploaded data.
+end note
+
+@enduml
