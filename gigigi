@@ -1,0 +1,1553 @@
+def update_existing_page(base_url: str, page_id: str, filled_body: str, headers: dict, new_title: str = None) -> dict:
+    """
+    Update an existing Confluence page by page ID with new content and (optionally) a new title.
+    """
+    # Fetch current version
+    url = f"{base_url}/rest/api/content/{page_id}?expand=version"
+    resp = _make_request("GET", url, headers)
+    _raise_for_auth(resp)
+    resp.raise_for_status()
+    page_data = resp.json()
+    current_version = page_data["version"]["number"]
+    payload = {
+        "version": {"number": current_version + 1},
+        "title": new_title or page_data["title"],
+        "type": "page",
+        "body": {
+            "storage": {
+                "value": filled_body,
+                "representation": "storage"
+            }
+        }
+    }
+    update_url = f"{base_url}/rest/api/content/{page_id}"
+    update_resp = _make_request("PUT", update_url, headers, data=json.dumps(payload))
+    _raise_for_auth(update_resp)
+    update_resp.raise_for_status()
+    return update_resp.json()
+import os, re, sys, json, datetime, subprocess, requests
+from html import escape
+from getpass import getpass
+from bs4 import BeautifulSoup
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from datetime import datetime, timedelta
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
+# Fetch username (bank id) from environment; password will be prompted at runtime
+BANK_ID = os.environ.get("USERNAME") or os.environ.get("USER")
+AUTH_CREDENTIALS = None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  AUTHENTICATION & REQUEST HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_request(method, url, headers, auth=None, params=None, data=None):
+    # Use HTTP Basic Auth if credentials are present
+    if AUTH_CREDENTIALS:
+        auth = (AUTH_CREDENTIALS["username"], AUTH_CREDENTIALS["password"])
+    return requests.request(
+        method, url,
+        headers=headers,
+        auth=auth,
+        params=params,
+        data=data,
+        verify=False,
+        timeout=30,
+    )
+
+
+def _build_headers(pat: str) -> dict:
+    # If using basic auth, do not set Authorization header
+    if AUTH_CREDENTIALS:
+        return {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+    return {
+        "Authorization": f"Bearer {pat}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _get_document_producer() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.name"],
+            capture_output=True, text=True, timeout=5
+        )
+        name = result.stdout.strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return os.environ.get("USERNAME") or os.environ.get("USER") or ""
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  URL / PAGE-ID EXTRACTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def extract_page_id_from_url(url: str) -> str:
+    """
+    Extract the numeric page ID from a Confluence URL.
+
+    Supported formats:
+      • /pages/viewpage.action?pageId=1234567890
+      • /display/SPACEKEY/Page+Title
+    Returns the page ID string, or raises ValueError.
+    """
+    # Format 1: explicit pageId parameter
+    m = re.search(r'[?&]pageId=(\d+)', url)
+    if m:
+        return m.group(1)
+
+    # Format 2: /display/SPACE/Title — need to do an API lookup
+    return None   # signal: need API lookup
+
+
+def get_page_by_url(url: str, headers: dict) -> tuple:
+    """
+    Fetch Confluence page data from its URL.
+    Returns (page_data_dict, base_url_str).
+    """
+    base_url_m = re.match(r'(https?://[^/]+)', url)
+    if not base_url_m:
+        raise ValueError("Could not parse base URL from the provided link.")
+    base_url = base_url_m.group(1)
+
+    # --- pageId= format ---
+    m = re.search(r'[?&]pageId=(\d+)', url)
+    if m:
+        page_id = m.group(1)
+        api_url = f"{base_url}/rest/api/content/{page_id}?expand=body.storage,version,ancestors,space,title"
+        resp = _make_request("GET", api_url, headers)
+        _raise_for_auth(resp)
+        resp.raise_for_status()
+        return resp.json(), base_url
+
+    # --- /display/SPACE/Title format ---
+    m = re.search(r'/display/([^/]+)/([^?#]+)', url)
+    if m:
+        space_key  = m.group(1)
+        page_title = m.group(2).replace('+', ' ').replace('%20', ' ')
+        print(f"  Space : {space_key}   Title : {page_title}")
+        api_url = f"{base_url}/rest/api/content"
+        params  = {
+            "spaceKey": space_key,
+            "title"   : page_title,
+            "expand"  : "body.storage,version,ancestors,space",
+        }
+        resp = _make_request("GET", api_url, headers, params=params)
+        _raise_for_auth(resp)
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        if not results:
+            raise ValueError(f"Page '{page_title}' not found in space '{space_key}'.")
+        return results[0], base_url
+
+    raise ValueError(
+        "Could not parse Confluence page URL.\n"
+        "Supported formats:\n"
+        "  • https://confluence.example.com/pages/viewpage.action?pageId=1234567890\n"
+        "  • https://confluence.example.com/display/SPACEKEY/Page+Title"
+    )
+
+
+def _raise_for_auth(resp):
+    if resp.status_code == 401:
+        raise PermissionError(
+            "401 Unauthorized — Authentication failed.\n"
+            "  > Check your username and password."
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BRD PARSER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def parse_brd(filepath: str) -> dict:
+    filepath = os.path.abspath(filepath)
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"BRD not found: {filepath}")
+    print(f"  Reading : {filepath}")
+
+    with open(filepath, encoding="utf-8") as f:
+        raw_lines = [line.rstrip("\n") for line in f]
+
+    # Detect whether the BRD uses markdown headings (## ...) or plain-text headings
+    has_markdown_headings = any(
+        l.startswith("## ") or (l.startswith("# ") and not l.startswith("## "))
+        for l in raw_lines
+    )
+
+    def _is_plain_heading(line: str) -> bool:
+        """Heuristic: short line with no markdown/bullet markers and no sentence-ending punctuation."""
+        s = line.strip()
+        if not s or len(s) > 80:
+            return False
+        if re.match(r'^[-*\u2022]', s):      # bullet
+            return False
+        if re.match(r'^\d+[.)]\s', s):        # numbered list item
+            return False
+        if s.endswith(('.', '!', '?', ',')):   # looks like a sentence
+            return False
+        return True
+
+    sections, current_key, buffer = {}, None, []
+
+    def flush():
+        if current_key is not None:
+            sections[current_key] = "\n".join(buffer).strip()
+
+    for line in raw_lines:
+        if line.startswith("# ") and not line.startswith("## "):
+            sections["title"] = line[2:].strip(); current_key = None; buffer = []
+        elif line.startswith("## "):
+            flush(); buffer = []
+            h = re.sub(r"^\d+[\.\)]\s*", "", line[3:].strip())
+            current_key = re.sub(r"\W+", "_", h.lower()).strip("_")
+        elif line.startswith("###") or line.startswith("####"):
+            buffer.append(line.lstrip("#").strip())
+        elif not has_markdown_headings and _is_plain_heading(line):
+            # Plain-text heading detection for non-markdown BRDs
+            flush(); buffer = []
+            h = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+            current_key = re.sub(r"\W+", "_", h.lower()).strip("_")
+        else:
+            buffer.append(line)
+    flush()
+    sections["__all__"]    = " ".join(v for k, v in sections.items() if not k.startswith("__"))
+    sections["__source__"] = os.path.basename(filepath)
+    print(f"  Sections: {[k for k in sections if not k.startswith('__')]}")
+    return sections
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  HTML / TEXT HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def e(v) -> str:
+    s = str(v or "").strip().replace("<br>", " | ").replace("<br/>", " | ")
+    return escape(s)
+
+def conf_table(headers: list, rows: list) -> str:
+    th   = "".join(f"<th><p><strong>{e(h)}</strong></p></th>" for h in headers)
+    body = ""
+    for row in rows:
+        cells = (list(row) + [""] * len(headers))[:len(headers)]
+        body += "<tr>" + "".join(f"<td><p>{e(c)}</p></td>" for c in cells) + "</tr>"
+    return f"<table><tbody><tr>{th}</tr>{body}</tbody></table>"
+
+def conf_list(items: list) -> str:
+    lis = "".join(f"<li>{e(i)}</li>" for i in items if str(i).strip())
+    return f"<ul>{lis}</ul>" if lis else ""
+
+def conf_p(text) -> str:
+    return f"<p>{e(text)}</p>" if str(text).strip() else ""
+
+def _norm(s: str) -> str:
+    return re.sub(r'[\W_]+', ' ', s.lower()).strip()
+
+def _section(brd: dict, *keys) -> str:
+    for kw in keys:
+        k = next((k for k in brd if kw in k and not k.startswith("__")), None)
+        if k: return brd[k]
+    return ""
+
+def _bullets(text: str) -> list:
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if re.match(r'^[-*\u2022]\s+', s):    out.append(re.sub(r'^[-*\u2022]\s+', '', s))
+        elif re.match(r'^\d+[.)]\s+', s): out.append(re.sub(r'^\d+[.)]\s+', '', s))
+    return out
+
+def _sentences(text: str) -> list:
+    t = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
+    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', t) if s.strip()]
+
+def _infer(all_text: str, yes_kws, no_kws=None, na_kws=None) -> str:
+    tl = all_text.lower()
+    if any(k in tl for k in (yes_kws or [])): return "YES"
+    if any(k in tl for k in (no_kws  or [])): return "NO"
+    if any(k in tl for k in (na_kws  or [])): return "NA"
+    return ""
+
+def _parse_md_table(text: str) -> tuple:
+    lines = [l.strip() for l in text.splitlines() if l.strip().startswith("|")]
+    if len(lines) < 3: return [], []
+    def split(l): return [c.strip().replace("<br>", " | ").replace("<br/>", " | ") for c in l.strip("|").split("|")]
+    headers = split(lines[0])
+    rows, prev = [], ""
+    for l in lines[2:]:
+        cols = (split(l) + [""] * len(headers))[:len(headers)]
+        cols[0] = cols[0] or prev
+        prev = cols[0]
+        rows.append(cols)
+    return headers, rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEMPLATE-AWARE SECTION FILLERS
+#  All functions operate directly on the fetched Confluence template HTML.
+#  They NEVER rebuild tables — they only inject BRD-derived values into the
+#  existing template structure.
+#
+#  Signature: fill_*(heading_tag, brd) -> bool  (True = something was filled)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _next_sibling_table(heading_tag):
+    """Return the first <table> found after heading_tag (before next same-level heading)."""
+    h_level = int(heading_tag.name[1])
+    node = heading_tag.next_sibling
+    while node:
+        if hasattr(node, 'name') and node.name:
+            if node.name == 'table':
+                return node
+            inner = node.find('table') if callable(getattr(node, 'find', None)) else None
+            if inner:
+                return inner
+            if re.match(r'^h[1-6]$', node.name, re.I) and int(node.name[1]) <= h_level:
+                break
+        node = node.next_sibling
+    return None
+
+
+def _set_cell(td, value):
+    """Overwrite a single table cell with plain text."""
+    td.clear()
+    td.append(BeautifulSoup(f'<p>{e(str(value))}</p>', 'html.parser'))
+
+
+def _col_idx(header_cells, *keywords):
+    """Return the index of the first header cell matching any keyword."""
+    for i, cell in enumerate(header_cells):
+        text = cell.get_text(strip=True).lower()
+        if any(kw.lower() in text for kw in keywords):
+            return i
+    return None
+
+
+def _empty_row(num_cols):
+    """Create a new <tr> with num_cols empty <td> cells."""
+    return BeautifulSoup(
+        '<tr>' + '<td><p></p></td>' * num_cols + '</tr>', 'html.parser'
+    ).find('tr')
+
+
+def _make_col_map(table):
+    """
+    Build a mapping of normalized_header_text -> absolute_column_index for data rows.
+    Handles multi-row headers with colspan/rowspan, INCLUDING sub-header rows
+    that use <td> instead of <th> (common in redesigned Confluence templates).
+    Stops processing once it hits an actual data row (mostly empty cells).
+    """
+    col_map = {}
+    rowspan_holds = {}  # col_idx -> remaining rows still held
+
+    for row in table.find_all('tr'):
+        cells = row.find_all(['th', 'td'])
+        if not cells:
+            continue
+        has_th = bool(row.find('th'))
+        non_empty = sum(1 for c in cells if c.get_text(strip=True))
+
+        # A row is a header/sub-header if it has <th> tags OR
+        # if more than half its cells have text (sub-header pattern with <td>).
+        # An actual data row is mostly empty (template placeholder).
+        is_header_like = has_th or (non_empty > len(cells) // 2)
+        if not is_header_like:
+            break  # Hit actual data rows — stop mapping
+
+        abs_col = 0
+        for cell in cells:
+            # Advance past positions still held by rowspan from above rows
+            while abs_col in rowspan_holds:
+                rowspan_holds[abs_col] -= 1
+                if rowspan_holds[abs_col] == 0:
+                    del rowspan_holds[abs_col]
+                abs_col += 1
+            text    = _norm(cell.get_text(separator=' ', strip=True))
+            colspan = int(cell.get('colspan', 1))
+            rowspan = int(cell.get('rowspan', 1))
+            if text and text not in col_map:
+                col_map[text] = abs_col
+            if rowspan > 1:
+                for c in range(abs_col, abs_col + colspan):
+                    rowspan_holds[c] = rowspan - 1
+            abs_col += colspan
+    return col_map
+
+
+def fill_expected_outcomes(heading_tag, brd, use_case: str = ""):
+    """
+    Fill Expected Outcomes section while preserving the template structure
+    (info macro, 'Scope of this SI' label, etc.).
+
+    - Sets 'Scope of this SI' to the BRD title.
+    - Synthesizes up to 10 detailed bullet points from multiple BRD sections.
+    - Appends fixed out-of-scope line.
+    """
+    use_case = use_case.strip() or brd.get("title", "").strip()
+
+    # Pull content from multiple relevant BRD sections in priority order
+    section_keys = [
+        "expected_outcome", "expected outcome",
+        "objective", "business_objective", "business objective", "business need",
+        "scope", "background", "project_background",
+        "requirement", "functional_requirement",
+        "deliverable", "benefit",
+    ]
+    bullet_pool = []
+    sentence_pool = []
+    seen_norm = set()
+
+    for key in section_keys:
+        text = _section(brd, key)
+        if not text:
+            continue
+        found = _bullets(text)
+        if found:
+            for b in found:
+                n = re.sub(r'\s+', ' ', b).strip().lower()
+                if n and n not in seen_norm and len(n) > 15:
+                    seen_norm.add(n)
+                    bullet_pool.append(b.strip())
+        else:
+            for s in _sentences(text):
+                n = re.sub(r'\s+', ' ', s).strip().lower()
+                if n and n not in seen_norm and len(n) > 30:
+                    seen_norm.add(n)
+                    sentence_pool.append(s.strip())
+
+    # Prefer explicit bullets; supplement with sentences to reach 10
+    combined = bullet_pool[:10]
+    if len(combined) < 10:
+        combined += sentence_pool[:10 - len(combined)]
+    bullet_list = combined[:10]
+
+    if not bullet_list and not use_case:
+        return False
+
+    # Fixed out-of-scope line always appended at the end
+    out_of_scope = "Out of Scope: How the metrics are derived in the upstream is out of scope."
+
+    h_level = int(heading_tag.name[1])
+    # Collect all sibling nodes in this section
+    section_nodes = []
+    node = heading_tag.next_sibling
+    while node:
+        if hasattr(node, 'name') and node.name:
+            if re.match(r'^h[1-6]$', node.name, re.I) and int(node.name[1]) <= h_level:
+                break
+        section_nodes.append(node)
+        node = node.next_sibling
+
+    # 1. Update 'Scope of this SI' paragraph in-place (preserves info macro above)
+    if use_case:
+        for sn in section_nodes:
+            if not hasattr(sn, 'get_text'):
+                continue
+            if 'scope of this si' in sn.get_text(separator=' ', strip=True).lower():
+                p = sn if (hasattr(sn, 'name') and sn.name == 'p') else (
+                    sn.find('p') if hasattr(sn, 'find') else None)
+                if p:
+                    p.clear()
+                    p.append(BeautifulSoup(
+                        f'<strong>Scope of this SI:</strong>\u00a0 {e(use_case)}',
+                        'html.parser'))
+                    break
+
+    # 2. Fill bullet list; replace existing <ul>/<ol>, or append new one
+    all_items = bullet_list + [out_of_scope]
+    li_html  = ''.join(f'<li><p>{e(item)}</p></li>' for item in all_items)
+    new_ul   = BeautifulSoup(f'<ul>{li_html}</ul>', 'html.parser').find('ul')
+
+    existing_ul = None
+    for sn in section_nodes:
+        if hasattr(sn, 'name'):
+            if sn.name in ('ul', 'ol'):
+                existing_ul = sn
+                break
+            found = sn.find(['ul', 'ol']) if hasattr(sn, 'find') else None
+            if found:
+                existing_ul = found
+                break
+
+    if existing_ul:
+        existing_ul.replace_with(new_ul)
+    else:
+        anchor = section_nodes[-1] if section_nodes else heading_tag
+        anchor.insert_after(new_ul)
+
+    return True
+
+
+def fill_integration_table(heading_tag, brd):
+    """Fill Integration Architecture table with BRD-derived rows."""
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    text = _section(brd, "integration_architecture", "integration")
+    sender_pat = re.compile(
+        r"(FPSL|Hadoop\s*\(FDP\)|S4GL|Aspire\s+Data\s+Factory\s*\(Postgres\))"
+        r"\s*\((?:CMDB\s+ID:\s*)?(\d{4,6})\)", re.I)
+    senders = sender_pat.findall(text)
+    if not senders:
+        return False
+
+    recv_m   = re.search(r"(EFDNA[^\(\)\n]*?)\((\d+)\)", text, re.I)
+    receiver = f"{recv_m.group(2)} \u2013 {recv_m.group(1).strip()}" if recv_m else "EFDNA"
+    interface = "ODBC" if "ODBC" in text else ""
+    batch     = "Batch \u2013 Daily" if "daily" in text.lower() else "Batch"
+    conf_val  = "Confidential" if "confidential" in text.lower() else "Internal"
+    golden    = "Yes" if "golden source" in text.lower() else "No"
+
+    all_rows = table.find_all('tr')
+    if not all_rows:
+        return False
+    header_cells = all_rows[0].find_all(['th', 'td'])
+    num_cols = len(header_cells)
+
+    # Column index helpers
+    def col(*kws): return _col_idx(header_cells, *kws)
+    sender_c   = col("sender")
+    receiver_c = col("receiver")
+    iface_c    = col("interface", "mechanism")
+    batch_c    = col("batch", "online")
+    entity_c   = col("entity", "exchanged")
+    pii_c      = col("pii", "pci", "confidential", "restricted")
+    facing_c   = col("external", "internal facing")
+    golden_c   = col("golden source", "golden")
+
+    # Remove existing data rows (keep header only)
+    for row in all_rows[1:]:
+        row.extract()
+
+    tbody = table.find('tbody') or table
+    for name, cmdb in senders:
+        tr = _empty_row(num_cols)
+        tds = tr.find_all('td')
+        def s(idx, val):
+            if idx is not None and idx < len(tds):
+                _set_cell(tds[idx], val)
+        s(sender_c,   f"{cmdb} \u2013 {name.strip()}")
+        s(receiver_c, receiver)
+        s(iface_c,    interface)
+        s(batch_c,    batch)
+        s(entity_c,   "Control metrics / financial data")
+        s(pii_c,      conf_val)
+        s(facing_c,   "Internal")
+        s(golden_c,   golden)
+        tbody.append(tr)
+    return True
+
+
+def fill_technologies_table(heading_tag, brd):
+    """Fill Technologies Adopted table with BRD-derived rows."""
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    text   = _section(brd, "technologies_adopted", "technolog")
+    cmdb_m = re.search(r"CMDB\s+ID:\s*(\d+)", text)
+    app_v  = f"{cmdb_m.group(1)} \u2013 EFDNA" if cmdb_m else "EFDNA"
+    host_m = re.search(r"hosted.*?(AWS\s+\w+)", text, re.I)
+    hosting = host_m.group(1) if host_m else "AWS Singapore"
+    invest  = "Retained" if "retained" in text.lower() else "New"
+    avail   = "High" if "high availability" in text.lower() else ""
+
+    brd_rows = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not re.match(r'^[-*\u2022]', s):
+            continue
+        s = re.sub(r'^[-*\u2022]\s*', '', s)
+        pur_m = re.match(r'(?:For|To)\s+(.+?),', s, re.I)
+        purpose = pur_m.group(1).strip().title() if pur_m else ""
+        tech_m = re.search(
+            r'(?:utilizes?|adopts?|is\s+used|is\s+employed)\s+([A-Z][\w\s,]+?)'
+            r'\s+(?:as\s+the|to\s+create|to\s+build)', s, re.I)
+        tech = tech_m.group(1).strip() if tech_m else ""
+        if not tech:
+            fb = re.search(r'(SAC|Datasphere|HANA\s+Cloud|SAP\s+Work\s+Zone|SAP\s+Cloud\s+Foundry)', s, re.I)
+            tech = fb.group(0) if fb else ""
+        model_m = re.search(r'with\s+([\w]+)\s+as\s+the\s+(?:technology\s+)?model', s, re.I)
+        model = model_m.group(1).strip() if model_m else ""
+        if tech or purpose:
+            brd_rows.append((app_v, purpose, "", tech, model, invest, hosting, hosting, avail, invest))
+
+    if not brd_rows:
+        return False
+
+    all_rows = table.find_all('tr')
+    if not all_rows:
+        return False
+    header_cells = all_rows[0].find_all(['th', 'td'])
+    num_cols = len(header_cells)
+
+    def col(*kws): return _col_idx(header_cells, *kws)
+    app_c    = col("business application", "cmdb")
+    pur_c    = col("purpose")
+    gts_c    = col("gts", "component")
+    tech_c   = col("technology name")
+    model_c  = col("model", "version")
+    invest_c = col("investment")
+    host_c   = col("primary")
+    dr_c     = col("dr", "secondary")
+    avail_c  = col("availability")
+    impact_c = col("impact", "deprecated")
+
+    for row in all_rows[1:]:
+        row.extract()
+
+    tbody = table.find('tbody') or table
+    for app_v2, pur_v, gts_v, tech_v, model_v, inv_v, host_v, dr_v, avail_v, imp_v in brd_rows:
+        tr = _empty_row(num_cols)
+        tds = tr.find_all('td')
+        def s(idx, val):
+            if idx is not None and idx < len(tds):
+                _set_cell(tds[idx], val)
+        s(app_c, app_v2); s(pur_c, pur_v);  s(gts_c, gts_v);  s(tech_c, tech_v)
+        s(model_c, model_v); s(invest_c, inv_v); s(host_c, host_v)
+        s(dr_c, dr_v); s(avail_c, avail_v); s(impact_c, imp_v)
+        tbody.append(tr)
+    return True
+
+
+def fill_security_link_table(heading_tag, brd):
+    """Fill the Security Toolkit link table with BRD-derived application details."""
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    text   = _section(brd, "application_level_impact", "application_impact", "technolog")
+    cmdb_m = re.search(r"(?:CMDB\s+ID|Business Application ID):\s*(\d+)", text)
+    cmdb   = cmdb_m.group(1) if cmdb_m else ""
+    app_m  = re.search(r"(EFDNA[\w\s]*?)\s+application", text, re.I)
+    app    = app_m.group(1).strip() if app_m else "EFDNA"
+    inst_m = re.search(r"(EFDNA\s+FinSight\s+ICON\s+PROD\s+AS)", text, re.I)
+    inst   = inst_m.group(1) if inst_m else ""
+
+    all_rows = table.find_all('tr')
+    if not all_rows:
+        return False
+    header_cells = all_rows[0].find_all(['th', 'td'])
+    num_cols = len(header_cells)
+    def col(*kws): return _col_idx(header_cells, *kws)
+
+    # Use first data row if it exists, otherwise append a new one
+    data_rows = [r for r in all_rows[1:] if r.find_all('td')]
+    if data_rows:
+        tds = data_rows[0].find_all('td')
+    else:
+        tr = _empty_row(num_cols)
+        (table.find('tbody') or table).append(tr)
+        tds = tr.find_all('td')
+
+    def s(idx, val):
+        if idx is not None and idx < len(tds):
+            _set_cell(tds[idx], val)
+    s(col("business application id", "cmdb id"), cmdb)
+    s(col("business application name"),          app)
+    s(col("instance", "service"),                inst)
+    s(col("stk updated"),                        "Yes")
+    return True
+
+
+def fill_app_impact_table(heading_tag, brd):
+    """
+    Fill the Application-level Impact table with BRD-derived values.
+
+    Uses _make_col_map to correctly handle the redesigned multi-row merged-header
+    table (colspan/rowspan) so column indices align with actual <td> positions.
+    Only fills a cell when a value is available; leaves it empty otherwise.
+    """
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    text = _section(brd, "application_level_impact", "application_impact")
+    t    = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+
+    # --- BRD-derived values ---
+    cmdb_m   = re.search(r"(?:CMDB\s+ID|Business Application ID):\s*(\d+)", text)
+    cmdb     = cmdb_m.group(1) if cmdb_m else ""
+    app_m    = re.search(r"(EFDNA[\w\s]*?)\s+(?:application|FinSight)", text, re.I)
+    app      = app_m.group(0).strip() if app_m else ""
+    inst_m   = re.search(r"(EFDNA\s+FinSight\s+ICON\s+PROD\s+AS)", text, re.I)
+    inst     = inst_m.group(1) if inst_m else ""
+    hosting  = "3. SaaS" if "saas" in text.lower() else ("2. PaaS" if text else "")
+    arch_sig = ("Significant" if "architecturally significant" in text.lower()
+                else ("Not Significant" if text else ""))
+    desc_m   = re.search(r"(new\s+(?:dashboards?|capability|reporting)[^.]+\.)", text, re.I)
+    desc     = desc_m.group(1) if desc_m else (_sentences(text)[0] if _sentences(text) else "")
+
+    # --- Build colspan-aware column map from ALL header rows ---
+    col_map = _make_col_map(table)
+
+    def col(*kws):
+        """Return index of first col_map entry whose label contains any keyword."""
+        for kw in kws:
+            for label, idx in col_map.items():
+                if kw in label:
+                    return idx
+        return None
+
+    # --- Map column keywords → BRD values (only non-empty values are written) ---
+    fill_map = {}
+    def reg(idx, val):
+        if idx is not None and str(val).strip():
+            fill_map[idx] = val
+
+    reg(col("business application id", "cmdb id"),  cmdb)
+    reg(col("business application name"),            app)
+    reg(col("application service", "instance name", "service instance"), inst)
+    reg(col("application hosting", "hosting"),       hosting)
+    reg(col("architecturally significant"),          arch_sig)
+    reg(col("description"),                          desc)
+    reg(col("software change"),  r(["code change","software change","development"], [], []))
+    reg(col("architecture change"), r(["architecture change","new architecture"], [], []))
+    reg(col("inbound"),          r(["inbound","source","ingestion","odbc"]))
+    reg(col("outbound"),         r(["outbound","downstream","publish","efdna"]))
+    reg(col("integration"),      r(["integration","interface","odbc"]))
+    reg(col("end to end", "e2e"), "Yes")
+    reg(col("location"),         r([], ["no change to location","no location change"]))
+    reg(col("volume"),           r([], ["no change to volume","no volume change"]))
+    reg(col("performance"),      r([], ["no change to performance","no performance impact"]))
+    reg(col("resilience"),       r([], ["no change to resilience","no resilience change"]))
+    reg(col("capacity"),         r([], ["no change to capacity","no capacity change"]))
+
+    if not fill_map:
+        return False
+
+    # --- Find data rows: skip ALL header/sub-header rows at the top ---
+    # A header-like row has <th> OR more than half its cells are non-empty text.
+    # Actual data rows (template placeholders) are mostly empty.
+    all_rows = table.find_all('tr')
+    header_row_count = 0
+    for row in all_rows:
+        cells = row.find_all(['th', 'td'])
+        if not cells:
+            break
+        non_empty = sum(1 for c in cells if c.get_text(strip=True))
+        if row.find('th') or non_empty > len(cells) // 2:
+            header_row_count += 1
+        else:
+            break  # first row that looks like a data row
+
+    data_rows = all_rows[header_row_count:]
+    num_cols  = max((len(rw.find_all('td')) for rw in data_rows), default=len(col_map))
+    tbody     = table.find('tbody') or table
+
+    if data_rows:
+        # Update existing data rows in-place — preserves redesigned template structure
+        for row_el in data_rows:
+            tds = row_el.find_all('td')
+            for idx, val in fill_map.items():
+                if idx < len(tds):
+                    _set_cell(tds[idx], val)
+    else:
+        # Template has no data rows yet — insert one
+        tr  = _empty_row(num_cols)
+        tds = tr.find_all('td')
+        for idx, val in fill_map.items():
+            if idx < len(tds):
+                _set_cell(tds[idx], val)
+        tbody.append(tr)
+
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESPONSE-ONLY HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def responses_data_completeness(brd):
+    t = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+    return [
+        r(["data quality","quality checks","authorised"]),
+        r(["golden source","reference data"]),
+        r(["data sovereignty","privacy","compliance"]),
+        r(["analytics","reporting","dashboard","efdna","hana cloud"]),
+        "", "",
+        r([], [], ["no ai","no ml","not use ai"]),
+        "", "",
+    ]
+
+def responses_security_checklist(brd):
+    t = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+    return [
+        r([], ["no new business application","not introduce a new"]),
+        r(["latest stk","existing stk","stk version"], []),
+        r([], ["no change to classification","no classification"]),
+        r([], ["no new location","no additional location"]),
+        r([], ["no automation","no bot"]),
+        r([], ["retained","no new technology product"]),
+        r([], ["no architecture change","existing architecture","saas"]),
+        r(["odbc","interface","integration is required"]),
+    ]
+
+def responses_cloud_checklist(brd):
+    t = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+    return [
+        r(["saas","paas","aws","cloud"]),
+        r(["saas"], ["iaas","paas"]),
+        r([], [], ["saas"]),
+        r([], [], ["saas"]),
+        r([], [], ["saas"]),
+        r([], [], ["saas"]),
+        r(["manifest"], ["saas"]),
+        r([], ["no data bunker","saas"]),
+        "", "",
+    ]
+
+def responses_arch_significance(brd):
+    t = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+    return [
+        r([], ["no deviation","follows approved"]),
+        r(["bia","business impact assessment"], []),
+        r([], ["no new business application","we did not introduce any new"]),
+        r([], ["no change to technology","retained"]),
+        r([], ["already onboarded","existing technology","no new technology"]),
+        r(["new capability","new dashboard","new reporting","new feature"]),
+        r(["bc rating","bc 3","bc 4","bc 5"]),
+        r([], ["no change to classification","classification remains"]),
+        r(["non-standard"], ["standard interface","odbc"]),
+        r(["data sovereignty","cas","cas-3461","country approval"]),
+        r(["retention","archival","regulatory","mifid"]),
+        r(["analytics","reporting","dashboard","efdna"]),
+        r([], ["no ai","no ml","not use ai","not use ml"]),
+        r(["odbc","new interface","integration is required"]),
+        r([], ["internal bank employees","internal use","remain internal"]),
+        r([], ["no data center migration","no migration","saas","retained"]),
+        r([], ["not a material","incremental change","previously approved"]),
+    ]
+
+def responses_alignment(brd):
+    t = brd.get("__all__", "")
+    def r(y, n=None, na=None): return _infer(t, y, n, na)
+    return [
+        r(["approved technology","sap","retained","reuse","existing"]),
+        r(["data quality","quality checks","data governance","data management"]),
+        r(["security toolkit","stk","confidential","security"]),
+        r(["resilience standard","compliant","availability","high availability"]),
+        r(["approved technology","invest status","already onboarded","retained"]),
+        r(["saas","paas","aws","standard"]),
+        r(["domain","target architecture","existing","efdna"]),
+        r(["saas","retained","existing hosting"]),
+    ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SECTION MAP
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# Function to fill Data Management table from BRD
+def fill_data_management_table(heading_tag, brd):
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    # Try to get the markdown table from the BRD section
+    text = _section(brd, "data_management", "data management")
+    if not text:
+        return False
+
+    headers, rows = _parse_md_table(text)
+    if not headers or not rows:
+        return False
+
+    all_rows = table.find_all('tr')
+    if not all_rows:
+        return False
+    header_cells = all_rows[0].find_all(['th', 'td'])
+    num_cols = len(header_cells)
+
+    # Remove existing data rows (keep header only)
+    for row in all_rows[1:]:
+        row.extract()
+
+    tbody = table.find('tbody') or table
+    for row in rows:
+        tr = _empty_row(num_cols)
+        tds = tr.find_all('td')
+        for idx, val in enumerate(row):
+            if idx < len(tds):
+                _set_cell(tds[idx], val)
+        tbody.append(tr)
+    return True
+
+SECTION_MAP = [
+    (("expected", "outcome"),             ("FILL", fill_expected_outcomes)),
+    (("logical", "architecture"),         "KEEP"),
+    (("data", "management"),              ("FILL", fill_data_management_table)),
+    (("email", "approval"),               "KEEP"),
+    (("data", "flow", "diagram"),         "KEEP"),
+    (("data", "completeness"),            ("RESPONSE_ONLY", responses_data_completeness)),
+    (("integration", "architecture"),     ("FILL", fill_integration_table)),
+    (("technologies", "adopted"),         ("FILL", fill_technologies_table)),
+    (("security", "impact"),              ("RESPONSE_ONLY", responses_security_checklist)),
+    (("security", "toolkit"),             ("FILL", fill_security_link_table)),
+    (("cloud", "completeness"),           ("RESPONSE_ONLY", responses_cloud_checklist)),
+    (("application", "level", "impact"),  ("FILL", fill_app_impact_table)),
+    (("architecture", "significance"),    ("RESPONSE_ONLY", responses_arch_significance)),
+    (("alignment", "standard"),           ("RESPONSE_ONLY", responses_alignment)),
+    (("review", "log"),                   "KEEP"),
+    (("deviation",),                      "KEEP"),
+    (("decision",),                       "KEEP"),
+    (("next", "step"),                    "KEEP"),
+]
+
+# Function to fill Data Management table from BRD
+def fill_data_management_table(heading_tag, brd):
+    table = _next_sibling_table(heading_tag)
+    if not table:
+        return False
+
+    # Try to get the markdown table from the BRD section
+    text = _section(brd, "data_management", "data management")
+    if not text:
+        return False
+
+    headers, rows = _parse_md_table(text)
+    if not headers or not rows:
+        return False
+
+    all_rows = table.find_all('tr')
+    if not all_rows:
+        return False
+    header_cells = all_rows[0].find_all(['th', 'td'])
+    num_cols = len(header_cells)
+
+    # Remove existing data rows (keep header only)
+    for row in all_rows[1:]:
+        row.extract()
+
+    tbody = table.find('tbody') or table
+    for row in rows:
+        tr = _empty_row(num_cols)
+        tds = tr.find_all('td')
+        for idx, val in enumerate(row):
+            if idx < len(tds):
+                _set_cell(tds[idx], val)
+        tbody.append(tr)
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CHAPTER APPROVAL DATE FILLER
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fill_chapter_approval_dates(soup, producer_name: str):
+    from datetime import date
+    today = date.today()
+    three_wk = today + timedelta(weeks=3)
+    days_to_mon = (7 - three_wk.weekday()) % 7
+    end_date = three_wk if days_to_mon == 0 else three_wk + timedelta(days=days_to_mon)
+    start_str = today.strftime("%d-%b-%Y")
+    end_str   = end_date.strftime("%d-%b-%Y")
+
+    for tbl in soup.find_all("table"):
+        first_row = tbl.find("tr")
+        if not first_row:
+            continue
+        headers = [c.get_text(strip=True).lower() for c in first_row.find_all(["th", "td"])]
+        if "start date" in headers and "date" in headers:
+            si = headers.index("start date")
+            ei = headers.index("date")
+            dp_idx = next((i for i, h in enumerate(headers) if "document producer" in h), None)
+            data_rows = [r for r in tbl.find_all("tr")[1:] if r.find_all("td")]
+            if data_rows:
+                tds = data_rows[0].find_all("td")
+                if si < len(tds):
+                    tds[si].clear()
+                    tds[si].append(BeautifulSoup(f"<p>{start_str}</p>", "html.parser"))
+                if ei < len(tds):
+                    tds[ei].clear()
+                    tds[ei].append(BeautifulSoup(f"<p>{end_str}</p>", "html.parser"))
+                if dp_idx is not None and dp_idx < len(tds) and producer_name:
+                    tds[dp_idx].clear()
+                    tds[dp_idx].append(BeautifulSoup(f"<p>{escape(producer_name)}</p>", "html.parser"))
+            print(f"  \u2713 Dates      : {start_str}  \u2192  {end_str}")
+            print(f"  \u2713 Producer   : {producer_name}")
+            return
+    print("  ! Dates     : Chapter Approval Status table not found")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RESPONSE-COLUMN FILLER (for RESPONSE_ONLY sections)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fill_response_column(heading_tag, responses: list) -> bool:
+    h_level = int(heading_tag.name[1])
+    node  = heading_tag.next_sibling
+    table = None
+    while node is not None:
+        if hasattr(node, 'name') and node.name:
+            if node.name == 'table':
+                table = node; break
+            inner = node.find('table') if callable(getattr(node, 'find', None)) else None
+            if inner:
+                table = inner; break
+            if re.match(r'^h[1-6]$', node.name, re.I) and int(node.name[1]) <= h_level:
+                break
+        node = node.next_sibling
+
+    if not table:
+        return False
+
+    rows = table.find_all('tr')
+    if not rows:
+        return False
+
+    header_cells = rows[0].find_all(['th', 'td'])
+    resp_idx = next(
+        (i for i, c in enumerate(header_cells) if 'response' in c.get_text(strip=True).lower()),
+        None
+    )
+    if resp_idx is None:
+        return False
+
+    data_rows = [r for r in rows[1:] if r.find_all('td')]
+    for row_el, resp_val in zip(data_rows, responses):
+        tds = row_el.find_all('td')
+        if resp_idx < len(tds) and str(resp_val).strip():
+            tds[resp_idx].clear()
+            tds[resp_idx].append(BeautifulSoup(f'<p>{e(str(resp_val))}</p>', 'html.parser'))
+    return True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TEMPLATE PROCESSOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def process_template(body: str, brd: dict, producer_name: str, use_case: str = "") -> tuple:
+    """
+    Fill BRD data into the template body.
+    Returns (filled_body_str, unfilled_sections_list).
+    """
+    soup = BeautifulSoup(body, "html.parser")
+    _fill_chapter_approval_dates(soup, producer_name)
+    all_headings = soup.find_all(re.compile(r'^h[1-6]$', re.I))
+
+    print(f"\n  Template headings ({len(all_headings)} found):")
+    for i, h in enumerate(all_headings):
+        print(f"    [{i:02d}] {h.name}: {h.get_text(separator=' ', strip=True)[:80]}")
+
+    filled_sections   = []
+    unfilled_sections = []
+
+    for keywords, builder in SECTION_MAP:
+        target_h = None
+        # First pass: require ALL keywords to match (strict)
+        for h in all_headings:
+            n = _norm(h.get_text(separator=' ', strip=True))
+            if all(kw in n for kw in keywords):
+                target_h = h
+                break
+        # Second pass: any-keyword fallback (catches numbered/shortened headings)
+        if target_h is None and len(keywords) > 1:
+            for h in all_headings:
+                n = _norm(h.get_text(separator=' ', strip=True))
+                if any(kw in n for kw in keywords):
+                    # Also ensure the *first* keyword still appears (anchor word)
+                    if keywords[0] in n:
+                        target_h = h
+                        break
+
+        if target_h is None:
+            print(f"  \u2717 Not found  : {keywords}")
+            continue
+
+        label = target_h.get_text(separator=' ', strip=True)[:70]
+
+        if builder == "KEEP":
+            print(f"  \u25a0 Keep       : {label}")
+            continue
+
+        # RESPONSE_ONLY — fill only the Response column in the template's table
+        if isinstance(builder, tuple) and builder[0] == "RESPONSE_ONLY":
+            ok = _fill_response_column(target_h, builder[1](brd))
+            if ok:
+                print(f"  ~ Response   : {label}")
+                filled_sections.append(label)
+            else:
+                print(f"  ! No table   : {label}")
+                unfilled_sections.append(label)
+            continue
+
+        # FILL — inject BRD values into the template's existing structure
+        if isinstance(builder, tuple) and builder[0] == "FILL":
+            fn = builder[1]
+            # pass use_case only to fill_expected_outcomes
+            if fn is fill_expected_outcomes:
+                ok = fn(target_h, brd, use_case)
+            else:
+                ok = fn(target_h, brd)
+            if ok:
+                print(f"  \u2713 Fill       : {label}")
+                filled_sections.append(label)
+            else:
+                print(f"  \u26a0 Skipped    : {label}  (insufficient BRD data or table not found)")
+                unfilled_sections.append(label)
+            continue
+
+    print(f"\n  Filled: {len(filled_sections)}  |  Skipped/unfilled: {len(unfilled_sections)}")
+    return str(soup), unfilled_sections
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONFLUENCE API
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fetch_page_content(base_url: str, page_id: str, headers: dict) -> dict:
+    """Fetch a Confluence page's body, title, and current version."""
+    url  = f"{base_url}/rest/api/content/{page_id}?expand=body.storage,version,title,space,ancestors"
+    resp = _make_request("GET", url, headers)
+    _raise_for_auth(resp)
+    resp.raise_for_status()
+    d = resp.json()
+    return {
+        "id"      : d["id"],
+        "title"   : d["title"],
+        "version" : d["version"]["number"],
+        "body"    : d["body"]["storage"]["value"],
+        "space"   : d.get("space", {}).get("key", ""),
+        "parent"  : (d.get("ancestors") or [{}])[-1].get("id"),
+    }
+
+
+def _next_chapter_number(base_url: str, parent_id: str, headers: dict) -> str:
+    """
+    Look at all child pages of parent_id, find the highest '3.XX' number,
+    and return the next one (e.g. '3.43'). Falls back to '3.41' if none found.
+    """
+    if not parent_id:
+        return "3.41"
+    url  = f"{base_url}/rest/api/content/{parent_id}/child/page?limit=200"
+    try:
+        resp = _make_request("GET", url, headers)
+        resp.raise_for_status()
+        titles = [r.get("title", "") for r in resp.json().get("results", [])]
+    except Exception:
+        return "3.41"
+    max_minor = 40
+    for title in titles:
+        m = re.match(r'^3\.(\d+)\b', title.strip())
+        if m:
+            max_minor = max(max_minor, int(m.group(1)))
+    return f"3.{max_minor + 1}"
+
+
+def create_draft_page(base_url: str, template: dict, filled_body: str,
+                      headers: dict, use_case_name: str = "", manual_chapter: str = None) -> dict:
+    """
+    Create a new Confluence page as a sibling draft of the template page.
+    Title format: '<next chapter number> <use_case_name>'
+    Chapter number is auto-incremented from existing sibling pages (starts at 3.41).
+    """
+    label   = use_case_name.strip() if use_case_name.strip() else "Draft"
+    if manual_chapter:
+        new_title = f"{manual_chapter} {label} draft"
+        # Old logic commented out below:
+        # chapter = _next_chapter_number(base_url, template.get("parent"), headers)
+        # new_title = f"{chapter} {label} draft"
+    else:
+        chapter = _next_chapter_number(base_url, template.get("parent"), headers)
+        new_title = f"{chapter} {label} draft"
+
+    payload = {
+        "type" : "page",
+        "title": new_title,
+        "space": {"key": template["space"]},
+        "body" : {
+            "storage": {
+                "value"         : filled_body,
+                "representation": "storage",
+            }
+        },
+    }
+    if template.get("parent"):
+        payload["ancestors"] = [{"id": template["parent"]}]
+
+    url  = f"{base_url}/rest/api/content"
+    resp = _make_request("POST", url, headers, params={"notify": "false"}, data=json.dumps(payload))
+    _raise_for_auth(resp)
+    resp.raise_for_status()
+    new_page = resp.json()
+
+    # Move the new page to appear immediately after the source/template page
+    new_id = new_page["id"]
+    move_url = f"{base_url}/rest/api/content/{new_id}/move/after/{template['id']}"
+    try:
+        move_resp = _make_request("PUT", move_url, headers)
+        if move_resp.status_code not in (200, 204):
+            print(f"  ! Move page warning: {move_resp.status_code} – page created but order may differ")
+    except Exception as exc:
+        print(f"  ! Move page warning: {exc} – page created but order may differ")
+
+    return new_page
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  INTERACTIVE MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    print("\n" + "=" * 60)
+    print("       SI Creation Bot – Standard Template Only")
+    print("=" * 60)
+
+    # Step 1: Authentication
+    print("\n[Step 1] Authentication")
+    bank_id = BANK_ID
+    if not bank_id:
+        print("  ERROR: Could not fetch your bank ID from the environment.")
+        return
+    print(f"  I have fetched your bank id: {bank_id}")
+    password = getpass("  Kindly provide only your password (input hidden): ")
+    if not password:
+        print("  ERROR: Password cannot be empty.")
+        return
+    global AUTH_CREDENTIALS
+    AUTH_CREDENTIALS = {"username": bank_id, "password": password}
+    print("  Authentication success.")
+
+    # Step 2: Fetch standard template page (hardcoded link)
+    print("\n[Step 2] Fetching the standard template page…")
+    standard_template_url = "https://confluence.global.standardchartered.com/pages/viewinfo.action?pageId=3672180072"
+    headers = _build_headers("")
+
+    try:
+        page_data, base_url = get_page_by_url(standard_template_url, headers)
+    except PermissionError as exc:
+        print(f"\n  AUTH ERROR: {exc}")
+        return
+    except Exception as exc:
+        print(f"\n  ERROR fetching standard template page: {exc}")
+        return
+
+    template_id = page_data["id"]
+    print(f"  Page ID : {template_id}")
+    print(f"  Title   : {page_data['title']}")
+
+    # Fetch full content if not already included in search result
+    try:
+        template = fetch_page_content(base_url, template_id, headers)
+    except Exception as exc:
+        print(f"\n  ERROR fetching page content: {exc}")
+        return
+
+    print(f"  Body    : {len(template['body'])} chars")
+
+    # Step 3: BRD upload
+    print("\n[Step 3] Please upload the BRD.")
+    print("  Provide the full path to the BRD Markdown file.")
+    brd_path = input("  BRD path > ").strip().strip('"').strip("'")
+    if not brd_path:
+        print("  ERROR: BRD path cannot be empty.")
+        return
+
+    try:
+        brd = parse_brd(brd_path)
+    except FileNotFoundError as exc:
+        print(f"\n  ERROR: {exc}")
+        return
+
+    # Step 4: Use-case name (for 'Scope of this SI')
+    print("\n[Step 4] Use-case name (used in 'Scope of this SI').")
+    use_case = input("  Use-case name > ").strip()
+    if not use_case:
+        use_case = brd.get("title", "").strip()
+        print(f"  (Using BRD title: {use_case})")
+
+    # Step 5: Fill template
+    print("\n[Step 5] Applying BRD data to the template…")
+    producer = _get_document_producer()
+    filled_body, unfilled = process_template(template["body"], brd, producer, use_case)
+
+
+    # Step 6: Update target Confluence page (hardcoded — no new drafts)
+    TARGET_PAGE_ID  = "3674446599"
+    TARGET_PAGE_URL = f"{base_url}/pages/viewpage.action?pageId={TARGET_PAGE_ID}"
+    print(f"\n[Step 6] Updating target page {TARGET_PAGE_ID}…")
+    try:
+        updated = update_existing_page(base_url, TARGET_PAGE_ID, filled_body, headers, new_title=None)
+    except requests.exceptions.HTTPError as exc:
+        print(f"\n  ERROR updating page: {exc}")
+        print(f"  Response : {exc.response.text[:600]}")
+        return
+    except Exception as exc:
+        print(f"\n  ERROR: {exc}")
+        return
+
+    print(f"\n{'=' * 60}")
+    print(f"  SI updated successfully!")
+    print(f"  Title   : {updated.get('title', '')}")
+    print(f"  Link    : {TARGET_PAGE_URL}")
+    print(f"\n  Please review the SI and make changes as needed.")
+
+    # Step 7: Report unfilled sections
+    if unfilled:
+        print(f"\n  Note: I couldn't fill the following section(s) due to insufficient data:")
+        for sec in unfilled:
+            print(f"    • {sec}")
+        print("\n  These sections have been left unchanged from the template.")
+    else:
+        print("\n  All sections were filled successfully from the BRD.")
+
+    print("=" * 60)
+
+    # Step 8: Donate changes prompt and GFA automation
+    print("\n[Step 8] Donate Changes Check")
+    donate_changes = input("  Are there any changes in donate changes as well? (yes/no): ").strip().lower()
+    if donate_changes == "no":
+        print("\nProceeding to GFA Form Automation...")
+        # Always use the fixed GFA template and update the fixed GFA page, just like SI
+        GFA_TEMPLATE_ID = "3674448890"
+        GFA_TARGET_ID = "3673801437"
+        GFA_TARGET_URL = f"{base_url}/pages/viewpage.action?pageId={GFA_TARGET_ID}"
+        try:
+            gfa_template = fetch_page_content(base_url, GFA_TEMPLATE_ID, headers)
+        except Exception as exc:
+            print(f"\n  ERROR fetching GFA template: {exc}")
+            import traceback
+            traceback.print_exc()
+            return
+        # Prompt for Application Name and Use Case Name
+        application_name = input("  Application Name > ").strip()
+        while not application_name:
+            print("  Application Name cannot be empty.")
+            application_name = input("  Application Name > ").strip()
+
+        use_case = input("  Use Case Name > ").strip()
+        while not use_case:
+            print("  Use Case Name cannot be empty.")
+            use_case = input("  Use Case Name > ").strip()
+
+        desc = brd.get("description") or brd.get("objective")
+        if not desc:
+            desc = input("  Provide a description for the use case > ").strip()
+        desc = desc.strip() if desc else ""
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(gfa_template["body"], "html.parser")
+
+        def set_gfa_field(label, value, html=False, append=False):
+            label_norm = label.lower().replace(" ","").replace(":","")
+            for row in soup.find_all("tr"):
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    th_text = th.get_text(" ", strip=True).lower().replace(" ","").replace(":","")
+                    if label_norm == th_text:
+                        if append and html:
+                            existing_html = str(td.decode_contents())
+                            td.clear()
+                            td.append(BeautifulSoup(existing_html + value, "html.parser"))
+                        else:
+                            td.clear()
+                            if html:
+                                td.append(BeautifulSoup(value, "html.parser"))
+                            else:
+                                td.append(str(value))
+
+        # 1. Project Name/ID: Format as 'Application Name - Use Case Name', avoid duplication
+        # Remove duplicate words (e.g., 'FinSight FinSight ICON')
+        def clean_project_name(app, uc):
+            app = app.strip()
+            uc = uc.strip()
+            # Remove app name from start of use case if present
+            if uc.lower().startswith(app.lower()):
+                uc = uc[len(app):].strip()
+            # Remove leading dashes or colons
+            uc = uc.lstrip('-:').strip()
+            return f"<b>{app} - {uc}</b>"
+        project_name_final = clean_project_name(application_name, use_case)
+        set_gfa_field("Project Name/ID", project_name_final, html=True)
+
+        # 2. Solution Intent Link (Chapter 2, Chapter 3) - keep as is, but fill SI Link below it
+        def set_si_link_in_solution_intent(soup, si_url):
+            for row in soup.find_all("tr"):
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    th_text = th.get_text(" ", strip=True).lower().replace(" ","").replace(":","")
+                    if th_text == "solutionintentlink(chapter2,chapter3)":
+                        # Find or create SI Link line
+                        soup_td = BeautifulSoup(str(td.decode_contents()), "html.parser")
+                        # Remove any existing SI Link lines
+                        for p in soup_td.find_all("p"):
+                            if p.get_text(strip=True).lower().startswith("si link"):
+                                p.decompose()
+                        # Add SI Link line
+                        si_link_p = soup_td.new_tag("p")
+                        si_link_strong = soup_td.new_tag("strong")
+                        si_link_strong.string = "SI Link: "
+                        si_link_a = soup_td.new_tag("a", href=si_url)
+                        si_link_a.string = si_url
+                        si_link_p.append(si_link_strong)
+                        si_link_p.append(si_link_a)
+                        soup_td.append(si_link_p)
+                        td.clear()
+                        td.append(soup_td)
+        set_si_link_in_solution_intent(soup, TARGET_PAGE_URL)
+
+        # 3. Description of the Project - keep Scope of this SI as is, then add FinSight [Use Case Name]: and Description
+        def fill_description_of_project(soup, use_case, desc):
+            for row in soup.find_all("tr"):
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    th_text = th.get_text(" ", strip=True).lower().replace(" ","").replace(":","")
+                    if th_text == "descriptionoftheproject":
+                        # Parse existing content and keep Scope of this SI as is
+                        soup_td = BeautifulSoup(str(td.decode_contents()), "html.parser")
+                        # Find and keep Scope of this SI
+                        new_content = BeautifulSoup("", "html.parser")
+                        found_scope = False
+                        for el in soup_td.contents:
+                            if el.name == 'p' and el.get_text(strip=True).lower().startswith('scope of this si'):
+                                new_content.append(el)
+                                found_scope = True
+                            elif found_scope:
+                                # Stop after scope section
+                                break
+                        # Add Use Case Name (no duplication)
+                        if use_case:
+                            strong_uc = new_content.new_tag("strong")
+                            strong_uc.string = f"{use_case} :"
+                            new_content.append(strong_uc)
+                            new_content.append(new_content.new_tag("br"))
+                        # Add Description
+                        if desc:
+                            strong_desc = new_content.new_tag("strong")
+                            strong_desc.string = "Description"
+                            new_content.append(strong_desc)
+                            new_content.append(new_content.new_tag("br"))
+                            p_desc = new_content.new_tag("p")
+                            p_desc.string = desc
+                            new_content.append(p_desc)
+                        td.clear()
+                        td.append(new_content)
+        fill_description_of_project(soup, use_case, desc)
+
+        # 4. GFA Engagement Start Date - today in '28 March 2026' format
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        gfa_start_date = today.strftime('%d %B %Y')
+        set_gfa_field("GFA Engagement Start Date", gfa_start_date)
+
+        # 5. Expected ARF Date - three weeks after today, on the next Monday
+        three_weeks = today + timedelta(weeks=3)
+        # If three_weeks is not a Monday (weekday 0), move to the next Monday
+        if three_weeks.weekday() == 0:
+            arf_date = three_weeks
+        else:
+            days_until_next_monday = (7 - three_weeks.weekday()) % 7
+            if days_until_next_monday == 0:
+                days_until_next_monday = 7
+            arf_date = three_weeks + timedelta(days=days_until_next_monday)
+        arf_date_str = arf_date.strftime('%d %B %Y')
+        set_gfa_field("Expected ARF Date", arf_date_str)
+
+        # 6. Detail Elaboration of the Release - only write use case and description, no scope or template duplication, always fill
+        def fill_detail_elaboration_nested_table(soup, use_case, desc):
+            # Find the 'Detail elaboration of the Release' row
+            for row in soup.find_all("tr"):
+                th = row.find("th")
+                td = row.find("td")
+                if th and td:
+                    th_text = th.get_text(" ", strip=True).lower().replace(" ","").replace(":","")
+                    if th_text == "detailelaborationoftherelease":
+                        # Find the nested table
+                        nested_table = td.find("table")
+                        if not nested_table:
+                            return
+                        # Find the row where first th is 'Business Driver of Change'
+                        for nrow in nested_table.find_all("tr"):
+                            n_ths = nrow.find_all("th")
+                            n_tds = nrow.find_all("td")
+                            if n_ths and n_tds and n_ths[0].get_text(strip=True).lower() == "business driver of change":
+                                # Always update the Description cell (even if no change)
+                                # Preserve all template content (including Scope of this SI) and append use case/desc
+                                preserved = BeautifulSoup(str(n_tds[0].decode_contents()), "html.parser")
+                                n_tds[0].clear()
+                                for el in preserved.contents:
+                                    n_tds[0].append(el)
+                                # Always append use case and description after preserved content
+                                if use_case:
+                                    p_uc = nested_table.new_tag("p")
+                                    strong_uc = nested_table.new_tag("strong")
+                                    strong_uc.string = f"{use_case} :"
+                                    p_uc.append(strong_uc)
+                                    n_tds[0].append(p_uc)
+                                if desc:
+                                    p_desc = nested_table.new_tag("p")
+                                    strong_desc = nested_table.new_tag("strong")
+                                    strong_desc.string = "Description"
+                                    p_desc.append(strong_desc)
+                                    n_tds[0].append(p_desc)
+                                    p_desc2 = nested_table.new_tag("p")
+                                    p_desc2.string = desc
+                                    n_tds[0].append(p_desc2)
+                                break
+        fill_detail_elaboration_nested_table(soup, use_case, desc)
+                
+        # 4. GFA Engagement Start Date
+        set_gfa_field("GFA Engagement Start Date", today.strftime("%Y-%m-%d"))
+        # 5. Expected ARF Date (next Monday after 3 weeks)
+        arf_date = today + timedelta(weeks=3)
+        while arf_date.weekday() != 0:
+            arf_date += timedelta(days=1)
+        set_gfa_field("Expected ARF Date", arf_date.strftime("%Y-%m-%d"))
+        # 6. Detail Elaboration of the Release (fill if available)
+        detail = brd.get("detail_elaboration_of_the_release") or brd.get("business_driver_of_change") or ""
+        if detail:
+            for row in soup.find_all("tr"):
+                ths = row.find_all("th")
+                tds = row.find_all("td")
+                if ths and tds and len(ths) == 1 and "business driver of change" in ths[0].get_text(strip=True).lower():
+                    tds[0].clear()
+                    tds[0].append(str(detail))
+
+        # Debug print to confirm update
+        print("\n[DEBUG] GFA HTML about to be updated. First 500 chars:\n", str(soup)[:500])
+        # Always update the GFA page title with the use case name
+        new_gfa_title = f"GFA form - Finance - EFDNA - {use_case}"
+        try:
+            updated_gfa = update_existing_page(base_url, GFA_TARGET_ID, str(soup), headers, new_title=new_gfa_title)
+        except Exception as exc:
+            print(f"\n  ERROR updating GFA page: {exc}")
+            import traceback
+            traceback.print_exc()
+            if hasattr(exc, 'response') and exc.response is not None:
+                print(f"  Response content: {exc.response.text[:1000]}")
+            return
+        print("\nGFA Form updated and populated:")
+        print(f"  Project Name: {project_name_final}")
+        print(f"  SI Link: {TARGET_PAGE_URL}")
+        print(f"  GFA Page Link: {GFA_TARGET_URL}")
+        print(f"  GFA Page Title: {new_gfa_title}")
+    else:
+        print("\nDonate changes detected. Please handle changes as required before proceeding to GFA form.")
+
+
+
+if __name__ == "__main__":
+    main()
