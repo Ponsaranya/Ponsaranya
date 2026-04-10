@@ -1,0 +1,7 @@
+After uploading the BRD, the system prompts the user to enter a password (empty password via pop-up). The expected behavior is that the system must pause execution and wait indefinitely until the user provides the password input.
+Currently, the system waits only for 30 seconds and then automatically proceeds to read/process the output file, even if the password has not been entered. This behavior is incorrect.
+Required behavior:
+The system must not proceed automatically after any timeout.
+It should strictly wait for user input (password submission) before continuing.
+Only after the password is entered (even if empty), the system should proceed to the next step (e.g., reading or processing the output file).
+Goal: Ensure a blocking/wait state is maintained until explicit user action (password input) is completed, with no auto-timeout fallback.
